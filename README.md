@@ -27,12 +27,21 @@ Clone this repo and copy the `skills/` folders into `~/.claude/skills/`.
 
 - [TradeBlocks MCP server](https://github.com/davidromeo/tradeblocks) running
 - Option Omega CSV exports imported into blocks
-- Market data (SPX/QQQ daily OHLCV + VIX context) for regime analysis
-- Optional: `MASSIVE_API_KEY` for intraday data and trade replay
+- Market data API connection for OHLCV + VIX data (Massive.com, ThetaData, or CSV import)
+- No dependency on other skill plugins — all skills are self-contained
 
 ## Usage
 
 Invoke skills with `/alex-tradeblocks:<skill-name>` or let Claude auto-detect based on your request.
+
+## Development
+
+See [CLAUDE.md](CLAUDE.md) for the full dev workflow. In short:
+
+1. Create `dev-<name>/SKILL.md` in your project's `.claude/skills/` — test as `/dev-<name>`
+2. When ready, copy to `skills/<name>/` in this repo (drop the `dev-` prefix)
+3. Bump version in `plugin.json` + `marketplace.json`, commit, push
+4. Update: `/plugin marketplace update alex-tradeblocks-skills`
 
 ## License
 
