@@ -1,10 +1,9 @@
 ---
-name: threshold-analysis
+name: alex-threshold-analysis
 description: >
   Generic threshold analysis for any trade or market field with interactive chart. Sweeps a parameter
   (SLR, VIX, premium, gap, duration, etc.) to find optimal entry/exit filter using correct per-trade
-  ROR methodology. Invoke as: /threshold-analysis [field]. Examples: /threshold-analysis SLR,
-  /threshold-analysis VIX, /threshold-analysis premium, /threshold-analysis gap.
+  ROR methodology. Examples: /alex-tradeblocks:alex-threshold-analysis SLR, VIX, premium, gap.
 compatibility: Requires TradeBlocks MCP server with trade data loaded.
 metadata:
   author: alex-tradeblocks

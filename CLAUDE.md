@@ -63,7 +63,7 @@ Skills are developed locally and promoted to this repo when ready.
 ### Dev → Promote → Publish
 
 1. **Dev** — Create `dev-<skill-name>/SKILL.md` in the project-level `.claude/skills/` directory. Test as `/dev-<skill-name>`. Changes are live immediately.
-2. **Promote** — When the skill works, copy to this repo's `skills/<skill-name>/` (without the `dev-` prefix). Update `metadata.author` to `alex-tradeblocks`.
+2. **Promote** — When the skill works, copy to this repo's `skills/alex-<skill-name>/` (replace `dev-` with `alex-`). Update `name` in frontmatter and `metadata.author` to `alex-tradeblocks`.
 3. **Publish** — Bump version in both `plugin.json` and `marketplace.json`, commit, push, tag. Cache is keyed by version — **no bump = no update**.
 4. **Test published** — Run `/plugin marketplace update alex-tradeblocks-skills`, restart Claude Code, invoke as `/alex-tradeblocks:<skill-name>`.
 5. **Clean up** — Delete the `dev-` copy from `.claude/skills/` so it doesn't shadow the plugin version.
@@ -73,9 +73,9 @@ Skills are developed locally and promoted to this repo when ready.
 | Stage | Location | Name | Invocation |
 |-------|----------|------|------------|
 | Dev | `.claude/skills/dev-my-skill/` | `dev-my-skill` | `/dev-my-skill` |
-| Published | `skills/my-skill/` (this repo) | `my-skill` | `/alex-tradeblocks:my-skill` |
+| Published | `skills/alex-my-skill/` (this repo) | `alex-my-skill` | `/alex-tradeblocks:alex-my-skill` |
 
-The `dev-` prefix makes it immediately clear which version you're running. Both can coexist during testing.
+The `dev-` prefix identifies in-development skills. The `alex-` prefix identifies published skills and avoids name collisions with skills from other authors (e.g., Romeo's `tradeblocks:dc-analysis` vs `alex-tradeblocks:alex-dc-analysis`). Both can coexist during testing.
 
 ### Version Bumping
 

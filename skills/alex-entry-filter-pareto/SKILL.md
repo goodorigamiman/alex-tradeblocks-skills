@@ -1,10 +1,9 @@
 ---
-name: entry-filter-pareto
+name: alex-entry-filter-pareto
 description: >
   Entry filter Pareto chart comparing all candidate filters side-by-side. Shows Avg ROR vs % of
-  baseline Net ROR retained for each filter at its recommended threshold. Invoke as:
-  /entry-filter-pareto. Use when comparing multiple entry filter candidates to find the best
-  risk-adjusted tradeoff.
+  baseline Net ROR retained for each filter at its recommended threshold. Use when comparing
+  multiple entry filter candidates to find the best risk-adjusted tradeoff.
 compatibility: Requires TradeBlocks MCP server with trade data and market data loaded.
 metadata:
   author: alex-tradeblocks
@@ -335,7 +334,7 @@ The user can customize the filter set:
 
 ## Related Skills
 
-- `/alex-tradeblocks:threshold-analysis [field]` — Deep dive into a single filter with full threshold sweep chart
+- `/alex-tradeblocks:alex-threshold-analysis [field]` — Deep dive into a single filter with full threshold sweep chart
 - `/tradeblocks:dc-analysis` — Comprehensive DC strategy analysis (includes filter evaluation)
 - `/tradeblocks:optimize` — Broader parameter exploration
 

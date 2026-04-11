@@ -6,8 +6,8 @@ Custom agent skills for analyzing Option Omega backtests and options trading por
 
 | Skill | Description |
 |-------|-------------|
-| `entry-filter-pareto` | Pareto chart comparing all candidate entry filters side-by-side. Shows Avg ROR vs % of baseline Net ROR retained. |
-| `threshold-analysis` | Generic threshold sweep for any trade or market field (SLR, VIX, premium, gap, etc.) with interactive chart. |
+| `alex-entry-filter-pareto` | Pareto chart comparing all candidate entry filters side-by-side. Shows Avg ROR vs % of baseline Net ROR retained. |
+| `alex-threshold-analysis` | Generic threshold sweep for any trade or market field (SLR, VIX, premium, gap, etc.) with interactive chart. |
 | `example-skill` | Placeholder skill demonstrating the correct SKILL.md format |
 
 ## Installation
@@ -39,7 +39,7 @@ Invoke skills with `/alex-tradeblocks:<skill-name>` or let Claude auto-detect ba
 See [CLAUDE.md](CLAUDE.md) for the full dev workflow. In short:
 
 1. Create `dev-<name>/SKILL.md` in your project's `.claude/skills/` — test as `/dev-<name>`
-2. When ready, copy to `skills/<name>/` in this repo (drop the `dev-` prefix)
+2. When ready, copy to `skills/alex-<name>/` in this repo (replace `dev-` with `alex-`)
 3. Bump version in `plugin.json` + `marketplace.json`, commit, push
 4. Update: `/plugin marketplace update alex-tradeblocks-skills`
 
