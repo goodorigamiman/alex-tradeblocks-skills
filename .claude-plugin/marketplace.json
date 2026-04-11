@@ -1,0 +1,21 @@
+{
+  "name": "alex-tradeblocks-skills",
+  "owner": {
+    "name": "AlexBanks"
+  },
+  "metadata": {
+    "description": "Custom TradeBlocks skills for Option Omega backtest analysis and options trading portfolios",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "alex-tradeblocks",
+      "description": "Custom analysis skills for OO backtests and live trading portfolios.",
+      "source": "./",
+      "strict": true,
+      "skills": [
+        "./skills/example-skill"
+      ]
+    }
+  ]
+}

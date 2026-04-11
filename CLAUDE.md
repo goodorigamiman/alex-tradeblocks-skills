@@ -1,0 +1,50 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What This Is
+
+A Claude Code plugin providing custom analysis skills for Option Omega backtests and options trading portfolios. Requires the [TradeBlocks](https://github.com/davidromeo/tradeblocks) MCP server to be running separately. Distributed via the Agent Skills marketplace.
+
+## Architecture
+
+```
+.claude-plugin/       Plugin metadata (plugin.json, marketplace.json)
+skills/               Skill directories, each with SKILL.md + optional references/
+```
+
+**Skills are workflow choreographers, not implementations.** Each SKILL.md describes a multi-step analysis workflow that invokes MCP tools in sequence. The actual logic lives in the TradeBlocks MCP server (50+ tools for trade queries, simulations, and analysis), which users install separately.
+
+**Reference files are interpretation guides.** Each `references/*.md` explains how to read analysis results — thresholds, tables, domain-specific nuance. Skills link to them contextually, not as prerequisites.
+
+## Setup
+
+No build, lint, or test steps — skills are static markdown. The TradeBlocks MCP server must be installed and running separately.
+
+## Skill Structure
+
+Every skill follows this pattern in its SKILL.md:
+
+```yaml
+---
+name: skill-id
+description: one-liner + trigger conditions
+compatibility: MCP server requirements
+metadata:
+  author: alex-tradeblocks
+  version: "1.0"
+---
+```
+
+Followed by: Prerequisites > Process (numbered steps with specific MCP tool calls) > Interpretation Reference > Related Skills.
+
+## Plugin Distribution
+
+- `.claude-plugin/plugin.json` — name, version, author for the plugin itself
+- `.claude-plugin/marketplace.json` — lists all skills, sets `strict: true`, defines marketplace entry
+- Install: `/plugin marketplace add goodorigamiman/alex-tradeblocks-skills` then `/plugin install alex-tradeblocks@alex-tradeblocks-skills`
+
+## Domain Concepts
+
+- **Blocks** — named strategy containers in the DuckDB database. Most tools require a `blockId` from `list_blocks`.
+- **Strategy profiles** — persistent metadata about a strategy's structure, entry filters, and expected regimes. Created by `profile_strategy`, consumed by analysis skills.
