@@ -6,6 +6,8 @@ Custom agent skills for analyzing Option Omega backtests and options trading por
 
 | Skill | Description |
 |-------|-------------|
+| `entry-filter-pareto` | Pareto chart comparing all candidate entry filters side-by-side. Shows Avg ROR vs % of baseline Net ROR retained. |
+| `threshold-analysis` | Generic threshold sweep for any trade or market field (SLR, VIX, premium, gap, etc.) with interactive chart. |
 | `example-skill` | Placeholder skill demonstrating the correct SKILL.md format |
 
 ## Installation

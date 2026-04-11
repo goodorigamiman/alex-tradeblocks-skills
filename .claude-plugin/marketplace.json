@@ -14,6 +14,8 @@
       "source": "./",
       "strict": true,
       "skills": [
+        "./skills/entry-filter-pareto",
+        "./skills/threshold-analysis",
         "./skills/example-skill"
       ]
     }
