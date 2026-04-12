@@ -9,8 +9,9 @@ A Claude Code plugin providing custom analysis skills for Option Omega backtests
 ## Architecture
 
 ```
-.claude-plugin/       Plugin metadata (plugin.json, marketplace.json)
-skills/               Skill directories, each with SKILL.md + optional references/
+.claude-plugin/            Plugin metadata (plugin.json, marketplace.json)
+skills/                    Skill directories, each with SKILL.md + optional references/
+Alex-TradeBlocks-Skills/   Supporting files (default CSVs, reference data) for skills
 ```
 
 **Skills are workflow choreographers, not implementations.** Each SKILL.md describes a multi-step analysis workflow that invokes MCP tools in sequence. The actual logic lives in the TradeBlocks MCP server (50+ tools for trade queries, simulations, and analysis), which users install separately.
@@ -50,6 +51,41 @@ Followed by: Prerequisites > Process (numbered steps with specific MCP tool call
 - **Market data API** — required for regime analysis, enrichment, and intraday replay. Any provider with OHLCV + VIX data works (Massive.com, ThetaData, CSV import, etc.).
 - **Option Omega** — trade data source. CSV exports are imported into blocks via `import_csv`.
 - **No external skill dependencies.** Skills in this repo are fully self-contained. Any workflow components inspired by other skill authors (Romeo, Amy, etc.) are copied directly into the skill rather than referenced as a dependency. This avoids version coupling and ensures skills work standalone.
+
+## Supporting Files (`Alex-TradeBlocks-Skills/`)
+
+Reference data and dependencies that skills read at runtime. Ships with the plugin and gets copied to the user's TradeBlocks Data root on first skill run.
+
+### File Convention
+
+- **`.default.csv`** — shipped defaults, maintained by the plugin author. Updated via push + version bump.
+- **User overrides** — same filename without `.default` suffix (e.g., `entry_filter_groups.csv`). Created by the user if they want to customize.
+
+### Resolution Order (for skills)
+
+When a skill needs a supporting file, resolve in this order:
+
+1. **User specifies a file at invocation** → use that
+2. **User version exists** in `Alex-TradeBlocks-Skills/` in the working directory (no `.default` suffix) → use that
+3. **Local `.default` copy exists** in `Alex-TradeBlocks-Skills/` in the working directory → use that
+4. **Neither exists** → copy `.default` files from the plugin cache to `Alex-TradeBlocks-Skills/` in the working directory, then use them
+
+To find the plugin cache path, resolve the latest version directory:
+```
+~/.claude/plugins/cache/alex-tradeblocks-skills/alex-tradeblocks/{latest-version}/Alex-TradeBlocks-Skills/
+```
+Sort version directories lexicographically and pick the last one.
+
+### Refreshing Defaults
+
+Local `.default.csv` files are copied once and not auto-updated. After a plugin update ships new defaults, users must delete or rename their local `.default.csv` files for the skill to re-provision from the updated cache.
+
+### Current Files
+
+| File | Purpose |
+|------|---------|
+| `entry_filter_groups.default.csv` | 38 entry filters with OO/TB mapping, Entry Group (A–H), and Implication columns |
+| `entry_filter_correlations.default.csv` | 73 pairwise correlations across market fields with group labels and implications |
 
 ## Domain Concepts
 

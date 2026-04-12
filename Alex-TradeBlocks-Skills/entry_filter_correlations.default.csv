@@ -1,0 +1,73 @@
+field_a,field_b,r,group_a,group_b,same_group,implication
+VIX_Close,VIX_Open,0.981,A: Volatility Level,A: Volatility Level,TRUE,Near-identical; use one or the other based on lookahead needs
+VIX_Close,VIX_High,0.991,A: Volatility Level,A: Volatility Level,TRUE,Near-identical; VIX_High redundant with VIX_Close
+VIX_Close,VIX_Low,0.990,A: Volatility Level,A: Volatility Level,TRUE,Near-identical; VIX_Low redundant with VIX_Close
+VIX_Close,VIX_IVR,0.650,A: Volatility Level,B: Relative Volatility,FALSE,Moderate overlap; IVR adds ranking dimension beyond raw level
+VIX_Close,VIX_IVP,0.527,A: Volatility Level,B: Relative Volatility,FALSE,Moderate overlap; IVP adds ranking dimension beyond raw level
+VIX_Close,VIX_Spike_Pct,0.207,A: Volatility Level,G: VIX Event,FALSE,Low correlation; spike captures transient events independent of level
+VIX_Close,Vol_Regime,0.869,A: Volatility Level,A: Volatility Level,TRUE,Near-redundant; Vol_Regime is discretized VIX level
+VIX_Close,Term_Structure_State,-0.394,A: Volatility Level,F: Term Structure,FALSE,Weak negative; term structure offers independent signal
+VIX_Close,ATR_Pct,0.935,A: Volatility Level,A: Volatility Level,TRUE,Near-redundant; ATR tracks VIX closely
+VIX_Close,Realized_Vol_5D,0.819,A: Volatility Level,A: Volatility Level,TRUE,Highly correlated; RV5D captures recent vol bursts
+VIX_Close,Realized_Vol_20D,0.878,A: Volatility Level,A: Volatility Level,TRUE,Near-redundant with VIX level
+VIX_Close,Intraday_Range_Pct,0.794,A: Volatility Level,A: Volatility Level,TRUE,Highly correlated; daily range reflects VIX level
+VIX_Close,RSI_14,-0.497,A: Volatility Level,C: Momentum / Trend,FALSE,Moderate inverse; different constructs (vol vs momentum)
+VIX_Close,Gap_Pct,-0.122,A: Volatility Level,D: Daily Price Action,FALSE,Weak; gap is largely independent of VIX level
+VIX_Close,Prev_Return_Pct,-0.110,A: Volatility Level,D: Daily Price Action,FALSE,Weak; prior return is independent of VIX level
+VIX_Close,Return_5D,-0.286,A: Volatility Level,C: Momentum / Trend,FALSE,Weak-moderate inverse; different constructs
+VIX_Close,Return_20D,-0.474,A: Volatility Level,C: Momentum / Trend,FALSE,Moderate inverse; extended selloffs raise VIX
+VIX_Close,Price_vs_SMA50_Pct,-0.614,A: Volatility Level,C: Momentum / Trend,FALSE,Moderate inverse; price below MA coincides with elevated VIX
+VIX_Close,Price_vs_EMA21_Pct,-0.530,A: Volatility Level,C: Momentum / Trend,FALSE,Moderate inverse; shorter MA less coupled than SMA50
+VIX_Close,Consecutive_Days,-0.174,A: Volatility Level,C: Momentum / Trend,FALSE,Weak; streak direction loosely tied to vol
+VIX_Close,Close_Position_In_Range,-0.137,A: Volatility Level,C: Momentum / Trend,FALSE,Weak; intraday close position independent of vol
+VIX_Close,Day_of_Week,-0.014,A: Volatility Level,E: Calendar,FALSE,No relationship
+VIX_Close,Month,0.024,A: Volatility Level,E: Calendar,FALSE,No relationship
+VIX_Close,Is_Opex,-0.003,A: Volatility Level,E: Calendar,FALSE,No relationship
+VIX_IVR,VIX_IVP,0.836,B: Relative Volatility,B: Relative Volatility,TRUE,Near-redundant; both measure VIX relative to its own history
+VIX_IVR,ATR_Pct,0.604,B: Relative Volatility,A: Volatility Level,FALSE,Moderate; IVR adds ranking dimension beyond raw vol
+VIX_IVR,Realized_Vol_20D,0.568,B: Relative Volatility,A: Volatility Level,FALSE,Moderate; IVR partially captures realized vol environment
+VIX_IVP,ATR_Pct,0.497,B: Relative Volatility,A: Volatility Level,FALSE,Moderate; IVP less coupled to raw vol than IVR
+VIX_IVP,Realized_Vol_20D,0.477,B: Relative Volatility,A: Volatility Level,FALSE,Moderate; IVP partially captures realized vol environment
+ATR_Pct,Realized_Vol_5D,0.843,A: Volatility Level,A: Volatility Level,TRUE,Near-redundant; ATR and RV5D both measure recent price dispersion
+ATR_Pct,Realized_Vol_20D,0.964,A: Volatility Level,A: Volatility Level,TRUE,Near-identical; ATR ~= RV20D by construction
+ATR_Pct,Intraday_Range_Pct,0.768,A: Volatility Level,A: Volatility Level,TRUE,Highly correlated; daily range is component of ATR
+Realized_Vol_5D,Realized_Vol_20D,0.832,A: Volatility Level,A: Volatility Level,TRUE,Highly correlated; RV5D is noisy subset of RV20D
+Realized_Vol_5D,Intraday_Range_Pct,0.781,A: Volatility Level,A: Volatility Level,TRUE,Highly correlated; daily range feeds into RV calculation
+RSI_14,Return_5D,0.591,C: Momentum / Trend,C: Momentum / Trend,TRUE,Moderately correlated; both capture short-term trend
+RSI_14,Return_20D,0.743,C: Momentum / Trend,C: Momentum / Trend,TRUE,Highly correlated; RSI 14-day lookback aligns with 20D return
+RSI_14,Price_vs_SMA50_Pct,0.803,C: Momentum / Trend,C: Momentum / Trend,TRUE,Near-redundant; both measure trend position
+RSI_14,Price_vs_EMA21_Pct,0.831,C: Momentum / Trend,C: Momentum / Trend,TRUE,Near-redundant; both measure trend position
+RSI_14,Consecutive_Days,0.426,C: Momentum / Trend,C: Momentum / Trend,TRUE,Moderate; streak direction correlates with RSI
+RSI_14,Close_Position_In_Range,0.330,C: Momentum / Trend,C: Momentum / Trend,TRUE,Weak-moderate; intraday close position reflects momentum
+Return_5D,Return_20D,0.468,C: Momentum / Trend,C: Momentum / Trend,TRUE,Moderate; 5D is subset of 20D window
+Return_5D,Price_vs_EMA21_Pct,0.758,C: Momentum / Trend,C: Momentum / Trend,TRUE,Highly correlated; short-term return drives EMA gap
+Return_5D,Consecutive_Days,0.455,C: Momentum / Trend,C: Momentum / Trend,TRUE,Moderate; winning streaks produce positive 5D returns
+Return_20D,Price_vs_SMA50_Pct,0.858,C: Momentum / Trend,C: Momentum / Trend,TRUE,Near-redundant; 20D return drives SMA50 gap
+Price_vs_SMA50_Pct,Price_vs_EMA21_Pct,0.886,C: Momentum / Trend,C: Momentum / Trend,TRUE,Near-redundant; pick one MA-based measure
+Gap_Pct,Prev_Return_Pct,-0.077,D: Daily Price Action,D: Daily Price Action,TRUE,Independent; gap and prior return capture different daily dynamics
+Gap_Pct,VIX_Spike_Pct,-0.140,D: Daily Price Action,G: VIX Event,FALSE,Weak inverse; gap down → VIX spike loosely coupled
+VIX_Spike_Pct,Vol_Regime,0.210,G: VIX Event,A: Volatility Level,FALSE,Weak; spikes occur across regimes but slightly more common in high vol
+Term_Structure_State,Vol_Regime,-0.386,F: Term Structure,A: Volatility Level,FALSE,Weak-moderate inverse; backwardation tends toward high vol
+Day_of_Week,Month,-0.016,E: Calendar,E: Calendar,TRUE,Independent; no structural relationship
+Day_of_Week,Is_Opex,0.313,E: Calendar,E: Calendar,TRUE,Moderate; OpEx typically falls on Friday
+Month,Is_Opex,0.001,E: Calendar,E: Calendar,TRUE,Independent; OpEx occurs in all months
+Vol_Regime,VIX_IVR,0.646,A: Volatility Level,B: Relative Volatility,FALSE,Moderate; regime buckets partially capture IVR ranking
+Vol_Regime,VIX_IVP,0.570,A: Volatility Level,B: Relative Volatility,FALSE,Moderate; regime buckets partially capture IVP ranking
+Term_Structure_State,VIX_IVR,-0.549,F: Term Structure,B: Relative Volatility,FALSE,Moderate inverse; backwardation coincides with elevated IVR
+Term_Structure_State,VIX_IVP,-0.472,F: Term Structure,B: Relative Volatility,FALSE,Moderate inverse; backwardation coincides with elevated IVP
+VIX9D_Close,VIX_Close,0.971,A: Volatility Level,A: Volatility Level,TRUE,Near-identical; VIX9D tracks VIX closely
+VIX9D_Close,VIX9D_IVR,0.735,A: Volatility Level,B: Relative Volatility,FALSE,High; VIX9D level drives its own IVR
+VIX9D_Close,VIX9D_IVP,0.631,A: Volatility Level,B: Relative Volatility,FALSE,Moderate; VIX9D level partially drives its own IVP
+VIX9D_IVR,VIX9D_IVP,0.744,B: Relative Volatility,B: Relative Volatility,TRUE,Highly correlated; both rank VIX9D within its own history
+VIX3M_Close,VIX_Close,0.977,A: Volatility Level,A: Volatility Level,TRUE,Near-identical; VIX3M tracks VIX closely
+VIX3M_Close,VIX3M_IVR,0.583,A: Volatility Level,B: Relative Volatility,FALSE,Moderate; VIX3M level partially drives its own IVR
+VIX3M_Close,VIX3M_IVP,0.490,A: Volatility Level,B: Relative Volatility,FALSE,Moderate; VIX3M level partially drives its own IVP
+VIX3M_IVR,VIX3M_IVP,0.874,B: Relative Volatility,B: Relative Volatility,TRUE,Near-redundant; both rank VIX3M within its own history
+VIX9D_Close,VIX3M_Close,0.904,A: Volatility Level,A: Volatility Level,TRUE,Near-redundant; all VIX tenors move together
+Prior_Range_vs_ATR,ATR_Pct,0.037,D: Daily Price Action,A: Volatility Level,FALSE,Independent; normalized range removes vol level
+Prior_Range_vs_ATR,Intraday_Range_Pct,0.206,D: Daily Price Action,A: Volatility Level,FALSE,Weak; normalized range partially reflects raw range
+Intraday_Return_Pct,Prev_Return_Pct,-0.106,D: Daily Price Action,D: Daily Price Action,TRUE,Weak inverse; minor mean-reversion signal
+Intraday_Return_Pct,Close_Position_In_Range,0.710,D: Daily Price Action,C: Momentum / Trend,FALSE,High; positive return → close near high of range
+Gap_Filled,VIX_Close,-0.023,D: Daily Price Action,A: Volatility Level,FALSE,Independent; gap fill is a binary microstructure event
+Gap_Filled,Gap_Pct,0.008,D: Daily Price Action,D: Daily Price Action,TRUE,Independent; gap fill not driven by gap size
+Gap_Filled,Intraday_Range_Pct,-0.016,D: Daily Price Action,A: Volatility Level,FALSE,Independent; gap fill unrelated to range
