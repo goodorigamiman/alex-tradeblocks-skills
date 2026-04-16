@@ -26,7 +26,10 @@
         "./skills/alex-sync-profiles",
         "./skills/alex-threshold-analysis",
         "./skills/alex-tradeblocks-startup"
-      ]
+      ],
+      "metadata": {
+        "version": "2.1.1"
+      }
     }
   ]
 }

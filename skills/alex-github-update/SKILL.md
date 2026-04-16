@@ -7,7 +7,7 @@ description: >
 compatibility: Requires git, gh CLI, and access to the GitHub repo configured in alex_github_update_config.md.
 metadata:
   author: alex-tradeblocks
-  version: "2.0"
+  version: "2.1"
 ---
 
 # Dev GitHub Update
@@ -353,32 +353,40 @@ Pre-commit consistency audit:
 
 ---
 
-## Step 4: Update Marketplace Clone & Instruct User
+## Step 4: Update Plugin Cache & Instruct User
 
-**Important:** Do NOT run `claude plugins update` or `claude plugins install` from within a running Claude Code session. These CLI subcommands update filesystem state but the parent process does not reload its in-memory plugin registry, causing a silent version mismatch.
+Claude Code does NOT auto-refresh the plugin cache on restart — a restart alone reloads whatever version is already cached. To pick up the new publish, the cache itself must be updated via `claude plugin update`. That CLI command pulls the marketplace clone and rewrites the cache on disk, but the running session's in-memory registry remains stale until restart. So the flow is: run the update CLI here, then instruct the user to restart.
 
 After push succeeds:
 
-1. **Pull the marketplace clone.** Claude Code auto-updates the plugin cache from this clone on startup:
+1. **Run the plugin update via CLI:**
+   ```bash
+   claude plugin update {plugin_id}
+   ```
+   Where `{plugin_id}` is the full `{namespace}@{marketplace-name}` from config (e.g. `alex-tradeblocks@alex-tradeblocks-skills`).
+
+   Expected output: `✔ Plugin "{namespace}" updated from X.Y.Z to A.B.C for scope user. Restart to apply changes.`
+
+   If the command reports "already up to date", the marketplace clone didn't see the new push yet — wait a few seconds and retry, or manually pull:
    ```bash
    marketplace_path="$HOME/.claude/plugins/marketplaces/{marketplace_name}"
    git -C "$marketplace_path" pull origin main
    ```
-   Where `{marketplace_name}` is the marketplace portion of `plugin_id` (the part after `@`).
+   Then re-run `claude plugin update`.
 
-2. **Verify HEAD matches the push:**
+2. **Verify the cache updated:**
    ```bash
-   git -C "$marketplace_path" log --oneline -1
+   jq -r '.plugins["{plugin_id}"][0].version' ~/.claude/plugins/installed_plugins.json
    ```
-   Confirm the SHA matches the commit from Step 3. If not, retry the pull.
+   Must equal the version just pushed (Step 2E's bump). If not, the CLI update didn't land — surface the error and stop.
 
 3. **Report to the user:**
 
    ```
-   Published v{X.Y.Z} @ {sha}. Restart Claude Code to activate.
+   Published v{X.Y.Z} @ {sha}. Cache updated {old_ver} → {X.Y.Z}. Restart Claude Code to activate.
    ```
 
-   Do NOT add extra steps, caveats, or explanations. The marketplace clone is current — Claude Code will auto-update the cache on restart.
+   The cache is already current on disk; the restart just reloads the session's in-memory registry. Do not add extra steps — this is the whole fix.
 
 ---
 
@@ -394,7 +402,7 @@ Plugin version: X.Y.Z → X.Y.Z
   Added:   {published_prefix}skill-b (2.0), {published_prefix}skill-c (1.0)
   Skipped: N (no changes), M (excluded)
 Pushed: main @ abc1234
-Cache: restart to activate vX.Y.Z (marketplace clone updated)
+Cache: updated X.Y.Z → A.B.C on disk · restart Claude Code to load into session
 ```
 
 **Append to `$TB_ROOT/alex_github_update_log.md`:**
@@ -406,7 +414,7 @@ Cache: restart to activate vX.Y.Z (marketplace clone updated)
 - Added: {published_prefix}skill-b (2.0)
 - Skipped: N unchanged, M excluded
 - Pushed: main @ abc1234
-- Cache: restart to activate vX.Y.Z
+- Cache: `claude plugin update` ran, cache @ vX.Y.Z · restart required
 ```
 
 Create the log file if it doesn't exist. Append-only — never truncate.
@@ -422,4 +430,5 @@ Create the log file if it doesn't exist. Append-only — never truncate.
 - Do not modify the skill body content during sync — only transform frontmatter fields (name, description prefix, version suffix).
 - Do not delete entries on the allowlist: `.claude-plugin/`, `.git/`, `.gitignore`. Everything else in the repo must be either sourced from dev (and thus gets overwritten/synced) or deleted per Model A strict mirror.
 - Do not hardcode user-specific values (paths, repo names, prefixes) in this skill file. All user-specific values come from the config.
-- Do not run `claude plugins update`, `claude plugins install`, or `claude plugins uninstall` from within a Claude Code session. These update filesystem state but the running process doesn't reload — causing a silent version mismatch. Always direct the user to `/plugin` → "Update now" instead.
+- Do not skip the `claude plugin update` CLI call in Step 4 — Claude Code does NOT auto-refresh the cache on restart. A restart alone will keep loading the stale cached version. The CLI command is what rewrites the cache; the restart only reloads the already-updated cache into the session.
+- Do not run `claude plugin install` or `claude plugin uninstall` from within a Claude Code session — those change the set of installed plugins and the running process will not reconcile cleanly. Only `claude plugin update` is safe here because it only refreshes the cache of an already-installed plugin.
