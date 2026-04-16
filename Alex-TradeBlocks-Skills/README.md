@@ -11,6 +11,7 @@ Alex-TradeBlocks-Skills/
   README.md                                  This file
   entry_filter_groups.default.csv            Entry filter taxonomy and metadata
   entry_filter_correlations.default.csv      Pairwise correlation matrix for market fields
+  entry_filter_holidays.default.csv          US options market holidays (2021-2026)
 ```
 
 ### Naming Convention
@@ -34,7 +35,7 @@ To refresh defaults after a plugin update: delete or rename the local `.default.
 
 ### `entry_filter_groups.default.csv`
 
-**Purpose:** Unified reference table of all available entry filters across Option Omega (native) and TradeBlocks (MCP), with group classifications and redundancy annotations.
+**Purpose:** Unified reference table of all 59 available entry filters across Option Omega (native), TradeBlocks (MCP), and enrichment skills, with group classifications (A-H) and redundancy annotations.
 
 **Columns:**
 
@@ -52,22 +53,26 @@ To refresh defaults after a plugin update: delete or rename the local `.default.
 | TB Notes | Lookahead rules, lag requirements, computation notes |
 | Entry Group | Correlation cluster letter (A–H) from the correlation analysis |
 | Implication | Redundancy and independence notes for filter selection |
+| Report V1 | `TRUE` = include in Report V1 presentation (21 of 38 flagged) |
+| CSV Column | Exact column name in `entry_filter_data.csv`. Blank = skip (intraday/OO-only). Skills use this to map filter rows to data columns. |
+| Filter Type | `continuous` (threshold sweep), `binary` (TRUE/FALSE comparison), or `categorical` (per-category comparison) |
+| Computation | Blank = direct DB column reference. Non-blank = computed field (e.g., "VIX9D open / VIX open", "STO legs sum / BTO legs sum from regex") |
 
 **Entry Groups:**
 
 | Group | Name | Count | Key Representative | Description |
 |-------|------|-------|--------------------|-------------|
-| A | Volatility Level | 13 | VIX_Close or ATR_Pct | VIX level, ATR, RV5/20, Vol_Regime, Intraday_Range, VIX9D/3M close. All r > 0.77 with VIX_Close. Picking one captures the full cluster. |
-| B | Relative Volatility | 2 | VIX_IVR | VIX_IVR and VIX_IVP (r = 0.84 with each other). Adds ranking dimension beyond raw VIX level (~0.53–0.65 with Group A). |
-| C | Momentum / Trend | 8 | RSI_14 | RSI, SMA50, EMA21, Ret5D/20D, Consecutive_Days, Close_In_Range, MACD. SMA50 and EMA21 near-redundant (r = 0.89). |
-| D | Daily Price Action | 7 | Gap_Pct | Gap, ORB breakout/non-breakout, Prev_Return, Intra_Return, Gap_Filled, Prior_Range_vs_ATR. Mostly independent of each other. |
-| E | Calendar | 3 | Day_of_Week | Day_of_Week, Month, Is_Opex. Independent of all market fields (r < 0.03). |
-| F | Term Structure | 2 | Term_Structure_State | VIX term structure and VIX9D/VIX ratio. Weak negative with VIX level (r = -0.39); independent signal. |
-| G | VIX Event | 2 | VIX_Spike_Pct | VIX_Spike_Pct and VIX_Gap_Pct. Low correlation with VIX level (r ~0.21); captures transient dislocations. |
-| H | Premium & Structure | 3 | SLR | Short-to-long ratio, net credit, margin. Trade-specific, not market-condition-based. Excluded from market correlation analysis. |
+| A | Volatility Level | 14 | VIX_Close or ATR_Pct | VIX level/open/high/low, ATR, RV5/20, Vol_Regime, Intraday_Range, VIX9D/3M close. All r > 0.77 with VIX_Close. |
+| B | Relative Volatility | 6 | VIX_IVR | VIX/VIX9D/VIX3M IVR and IVP. Adds ranking dimension beyond raw VIX level (~0.53-0.65 with Group A). |
+| C | Momentum / Trend | 14 | RSI_14 | RSI, SMA 5/10/20/50/200 (daily), EMA 5/13/21/50 (min), Ret5D/20D, Close_In_Range, Consecutive_Days, MACD. |
+| D | Daily Price Action | 7 | Gap_Pct | Gap, ORB breakout/non-breakout, Prev_Return, Intra_Return, Gap_Filled, Prior_Range_vs_ATR. |
+| E | Calendar | 7 | Day_of_Week | DoW, Month, Is_Opex, Holiday proximity (Days/Weeks to/from holiday — continuous). |
+| F | Term Structure | 2 | Term_Structure_State | VIX term structure and VIX9D/VIX ratio. Weak negative with VIX level (r = -0.39). |
+| G | VIX Event | 2 | VIX_Spike_Pct | VIX_Spike_Pct and VIX_Gap_Pct. Low correlation with VIX level (r ~0.21). |
+| H | Premium & Structure | 7 | SLR | SLR, net credit, margin, DC leg premiums. Trade-specific, not market-condition-based. |
 
 **Scope & Limitations:**
-- Covers 13 OO native filters, 37 TB filters, 12 shared, 1 OO-only (MACD), 25 TB-only.
+- Covers 22 OO native filters, 47 TB filters, 18 shared, 4 OO-only, 29 TB-only. 63 total rows.
 - Group classifications are based on SPX market data correlations since 2006. Other underlyings (QQQ, IWM, etc.) may show different correlation structure.
 - Premium & Structure filters (Group H) were excluded from the correlation analysis because they are trade-specific, not market-condition fields.
 - Entry groups assume the standard TradeBlocks market data schema. Custom-derived fields added by users are not classified.
@@ -106,7 +111,7 @@ To refresh defaults after a plugin update: delete or rename the local `.default.
 - Derived fields (`Vol_Regime`, `Term_Structure_State`, `VIX_Spike_Pct`) from `market._context_derived`
 
 **Key Findings:**
-- 38 candidate entry filters collapse to ~8 independent signal types
+- 59 candidate entry filters collapse to ~8 independent signal types
 - Within Group A (Volatility Level), most pairs exceed r = 0.87 — a single representative (VIX_Close or ATR_Pct) captures the cluster
 - VIX_IVR and VIX_IVP (Group B) are r = 0.84 with each other but only ~0.53–0.65 with VIX level, justifying a separate group
 - SMA50 and EMA21 (Group C) are r = 0.89 — near-redundant; pick one
@@ -128,8 +133,30 @@ To refresh defaults after a plugin update: delete or rename the local `.default.
 
 ---
 
+### `entry_filter_holidays.default.csv`
+
+**Purpose:** Reference table of US options market holidays for computing trade proximity to holidays. Used by the `dev-entry-filter-enrich-market-holiday` skill to add Days_to_Holiday, Weeks_to_Holiday, Days_from_Holiday, and Weeks_from_Holiday columns to `entry_filter_data.csv`.
+
+**Columns:**
+
+| Column | Description |
+|--------|-------------|
+| Holiday_Name | Human-readable holiday name (e.g., "Thanksgiving Day") |
+| Date | Holiday date in ISO format (YYYY-MM-DD) |
+| Type | `closed` (full market closure) or `early_close` (shortened trading hours) |
+
+**Coverage:** 71 holidays from 2021-01-01 through 2026-12-25. Includes all CBOE-recognized US options market holidays and early close days.
+
+**Source:** CBOE US Options Holiday Calendar (https://www.cboe.com/about/hours/us-options/)
+
+**How to Extend:** Create `entry_filter_holidays.csv` (no `.default`) with additional rows for years beyond 2026. The skill resolves user override before the default.
+
+---
+
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2026-04-12 | Initial release: entry_filter_groups.default.csv (38 filters, 8 groups) and entry_filter_correlations.default.csv (73 pairs) |
+| 1.1 | 2026-04-14 | Added entry_filter_holidays.default.csv (71 US options market holidays, 2021-2026) |
+| 1.2 | 2026-04-14 | Expanded entry_filter_groups to 59 filters (was 38). Restored Entry Groups B/F/G. Added SMA 5/10/20/50/200 (daily), EMA 5/13/21/50 (min), 4 holiday proximity columns (continuous). Fixed phase1 SQL VIX_Gap_Pct reference. Added {ticker} placeholder to phase1 SQL. |

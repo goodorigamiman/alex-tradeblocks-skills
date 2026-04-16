@@ -45,7 +45,7 @@ Return_5D,Consecutive_Days,0.455,C: Momentum / Trend,C: Momentum / Trend,TRUE,Mo
 Return_20D,Price_vs_SMA50_Pct,0.858,C: Momentum / Trend,C: Momentum / Trend,TRUE,Near-redundant; 20D return drives SMA50 gap
 Price_vs_SMA50_Pct,Price_vs_EMA21_Pct,0.886,C: Momentum / Trend,C: Momentum / Trend,TRUE,Near-redundant; pick one MA-based measure
 Gap_Pct,Prev_Return_Pct,-0.077,D: Daily Price Action,D: Daily Price Action,TRUE,Independent; gap and prior return capture different daily dynamics
-Gap_Pct,VIX_Spike_Pct,-0.140,D: Daily Price Action,G: VIX Event,FALSE,Weak inverse; gap down → VIX spike loosely coupled
+Gap_Pct,VIX_Spike_Pct,-0.140,D: Daily Price Action,G: VIX Event,FALSE,Weak inverse; gap down -> VIX spike loosely coupled
 VIX_Spike_Pct,Vol_Regime,0.210,G: VIX Event,A: Volatility Level,FALSE,Weak; spikes occur across regimes but slightly more common in high vol
 Term_Structure_State,Vol_Regime,-0.386,F: Term Structure,A: Volatility Level,FALSE,Weak-moderate inverse; backwardation tends toward high vol
 Day_of_Week,Month,-0.016,E: Calendar,E: Calendar,TRUE,Independent; no structural relationship
@@ -67,7 +67,7 @@ VIX9D_Close,VIX3M_Close,0.904,A: Volatility Level,A: Volatility Level,TRUE,Near-
 Prior_Range_vs_ATR,ATR_Pct,0.037,D: Daily Price Action,A: Volatility Level,FALSE,Independent; normalized range removes vol level
 Prior_Range_vs_ATR,Intraday_Range_Pct,0.206,D: Daily Price Action,A: Volatility Level,FALSE,Weak; normalized range partially reflects raw range
 Intraday_Return_Pct,Prev_Return_Pct,-0.106,D: Daily Price Action,D: Daily Price Action,TRUE,Weak inverse; minor mean-reversion signal
-Intraday_Return_Pct,Close_Position_In_Range,0.710,D: Daily Price Action,C: Momentum / Trend,FALSE,High; positive return → close near high of range
+Intraday_Return_Pct,Close_Position_In_Range,0.710,D: Daily Price Action,C: Momentum / Trend,FALSE,High; positive return -> close near high of range
 Gap_Filled,VIX_Close,-0.023,D: Daily Price Action,A: Volatility Level,FALSE,Independent; gap fill is a binary microstructure event
 Gap_Filled,Gap_Pct,0.008,D: Daily Price Action,D: Daily Price Action,TRUE,Independent; gap fill not driven by gap size
 Gap_Filled,Intraday_Range_Pct,-0.016,D: Daily Price Action,A: Volatility Level,FALSE,Independent; gap fill unrelated to range

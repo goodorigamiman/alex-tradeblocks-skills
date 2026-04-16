@@ -1,0 +1,72 @@
+Holiday_Name,Date,Type
+New Year's Day,2021-01-01,closed
+Martin Luther King Jr. Day,2021-01-18,closed
+Washington's Birthday,2021-02-15,closed
+Good Friday,2021-04-02,closed
+Memorial Day,2021-05-31,closed
+Independence Day Observed,2021-07-05,closed
+Labor Day,2021-09-06,closed
+Thanksgiving Day,2021-11-25,closed
+Thanksgiving Day Early Close,2021-11-26,early_close
+Christmas Day Observed,2021-12-24,closed
+New Year's Day Observed,2022-01-02,closed
+Martin Luther King Jr. Day,2022-01-17,closed
+Washington's Birthday,2022-02-21,closed
+Good Friday,2022-04-15,closed
+Memorial Day,2022-05-30,closed
+Independence Day,2022-07-04,closed
+Labor Day,2022-09-05,closed
+Thanksgiving Day,2022-11-24,closed
+Thanksgiving Day Early Close,2022-11-25,early_close
+Christmas Day Observed,2022-12-26,closed
+New Year's Day Observed,2023-01-02,closed
+Martin Luther King Jr. Day,2023-01-16,closed
+Presidents' Day,2023-02-20,closed
+Good Friday,2023-04-07,closed
+Memorial Day,2023-05-29,closed
+Juneteenth Holiday,2023-06-19,closed
+Independence Day Early Close,2023-07-03,early_close
+Independence Day,2023-07-04,closed
+Labor Day,2023-09-04,closed
+Thanksgiving Day,2023-11-23,closed
+Thanksgiving Early Close,2023-11-24,early_close
+Christmas Day,2023-12-25,closed
+New Year's Day,2024-01-01,closed
+Martin Luther King Jr. Day,2024-01-15,closed
+Presidents' Day,2024-02-19,closed
+Good Friday,2024-03-29,closed
+Memorial Day,2024-05-27,closed
+Juneteenth Holiday,2024-06-19,closed
+Independence Day Early Close,2024-07-03,early_close
+Independence Day,2024-07-04,closed
+Labor Day,2024-09-02,closed
+Thanksgiving Day,2024-11-28,closed
+Thanksgiving Early Close,2024-11-29,early_close
+Christmas Early Close,2024-12-24,early_close
+Christmas Day,2024-12-25,closed
+New Year's Day,2025-01-01,closed
+National Day of Mourning (NDoM) - Jimmy Carter,2025-01-09,closed
+"Martin Luther King, Jr. Day",2025-01-20,closed
+Presidents' Day,2025-02-17,closed
+Good Friday,2025-04-18,closed
+Memorial Day,2025-05-26,closed
+Juneteenth Holiday,2025-06-19,closed
+Independence Day Early Close,2025-07-03,early_close
+Independence Day,2025-07-04,closed
+Labor Day,2025-09-01,closed
+Thanksgiving Day,2025-11-27,closed
+Thanksgiving Early Close,2025-11-28,early_close
+Christmas Early Close,2025-12-24,early_close
+Christmas Day,2025-12-25,closed
+New Year's Day,2026-01-01,closed
+Martin Luther King Jr. Day,2026-01-19,closed
+Presidents' Day,2026-02-16,closed
+Good Friday,2026-04-03,closed
+Memorial Day,2026-05-25,closed
+Juneteenth Holiday,2026-06-19,closed
+Independence Day Observed,2026-07-03,closed
+Labor Day,2026-09-07,closed
+Thanksgiving Day,2026-11-26,closed
+Thanksgiving Early Close,2026-11-27,early_close
+Christmas Early Close,2026-12-24,early_close
+Christmas Day,2026-12-25,closed

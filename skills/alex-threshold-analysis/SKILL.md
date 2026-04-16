@@ -2,347 +2,316 @@
 name: alex-threshold-analysis
 description: >
   Generic threshold analysis for any trade or market field with interactive chart. Sweeps a parameter
-  (SLR, VIX, premium, gap, duration, etc.) to find optimal entry/exit filter using correct per-trade
-  ROR methodology. Examples: /alex-tradeblocks:alex-threshold-analysis SLR, VIX, premium, gap.
+  continuously across both >= and <= directions, generates retention references at standard levels,
+  an efficiency frontier chart, and OO filter translation. Examples: /dev-threshold-analysis SLR, VIX O/N, premium.
 compatibility: Requires TradeBlocks MCP server with trade data loaded.
 metadata:
   author: alex-tradeblocks
-  version: "1.0"
+  version: "3.0"
 ---
 
 # Threshold Analysis
 
-Sweep any numeric field across thresholds to find optimal entry filters, normalized to Return on Risk (ROM). Produces an interactive HTML chart and a Current vs Recommended comparison table.
+Sweep any numeric field across all unique values to analyze entry filter potential. Produces an interactive HTML with:
+1. **Threshold chart** -- both-direction Avg ROM curves + CDF lines
+2. **Retention reference table** -- >= / <= / combo sections at 99/95/90/80/70/60/50r% with OO filter translation
+3. **Efficiency frontier** -- Avg ROM vs % ROR retained for all three filter approaches
+4. **Scatter plot** -- individual trade ROM vs field value with best-fit line
+
+No single recommendation is made. The chart presents retention references at standard levels and lets the user decide the tradeoff.
+
+## Architecture
+
+The chart logic lives in a **shared Python module** that any block can import:
+
+```
+gen_threshold_analysis.py    # shared generator (720+ lines)
+```
+
+Block-specific scripts are **thin wrappers** that pass a config dict. No chart code is duplicated.
+
+## File Dependencies (3 files)
+
+The skill needs exactly 3 files. No SQL queries, no MCP calls for data at runtime.
+
+### 1. entry_filter_data.csv (trade data)
+
+Location: `{block_folder}/alex-tradeblocks-ref/entry_filter_data.csv`
+
+One row per trade. Required columns: `rom_pct`, `pl_per_contract`, plus the target field column. Shared with Pareto and Heatmap skills -- building any of those first creates this cache. If missing, build via the shared Phase 1 pipeline (see Pareto skill for SQL).
+
+### 2. entry_filter_groups.csv (field metadata)
+
+Resolution order:
+1. `_shared/entry_filter_groups.csv` (user-customized)
+2. `_shared/entry_filter_groups.default.csv` (default)
+
+Provides `Filter`, `Short Name`, `Group`, `Direction`, and `Type` per field. Used for field lookup and display names.
+
+### 3. Shared generator module
+
+Location: `gen_threshold_analysis.py` (skill-local)
+
+Called by block-specific wrapper scripts. Contains all chart logic, HTML template, percentile computation, and Chart.js rendering.
 
 ## Supported Fields
 
-The skill accepts a field argument. Map the user's input to the correct data source:
+Map user input to CSV column:
 
-### Trade-Level Fields (from `trades.trade_data` or computed from legs)
+| User Input | CSV Column | Notes |
+|---|---|---|
+| `SLR`, `slr` | `SLR` | Short-to-long premium ratio |
+| `VIX`, `vix` | `VIX_Close` | Prior day VIX close |
+| `VIX open` | `VIX_Open` | Same-day VIX open |
+| `VIX O/N`, `vix gap` | `VIX_Gap_Pct` | Overnight VIX move (%) -- continuous, positive = up |
+| `VIX spike` | `VIX_Spike_Pct` | Prior day VIX spike |
+| `RSI`, `rsi` | `RSI_14` | Prior day SPX RSI-14 |
+| `RV5`, `realized vol` | `Realized_Vol_5D` | 5-day realized volatility |
+| `RV20` | `Realized_Vol_20D` | 20-day realized volatility |
+| `ATR`, `atr%` | `ATR_Pct` | ATR as % of price |
+| `VIX IVR`, `ivr` | `VIX_IVR` | IV Rank |
+| `VIX IVP`, `ivp` | `VIX_IVP` | IV Percentile |
+| `gap%` | `Gap_Pct` | Same-day SPX gap % |
+| `prev return` | `Prev_Return_Pct` | Prior day return |
+| `EMA21`, `price vs ema` | `Price_vs_EMA21_Pct` | Price vs EMA21 |
+| `SMA50`, `price vs sma` | `Price_vs_SMA50_Pct` | Price vs SMA50 |
+| `return 5d` | `Return_5D` | 5-day return |
+| `VIX9D ratio` | `VIX9D_VIX_Ratio` | VIX9D/VIX open ratio |
+| `premium` | `premium_per_contract` | Net credit per contract |
+| `margin` | `margin_per_contract` | Margin per contract |
+| `credit` | `premium_per_contract` | Alias for premium |
 
-| User Input | Internal Field | Source | Notes |
-|------------|---------------|--------|-------|
-| `SLR`, `slr`, `short long ratio` | `openingShortLongRatio` | Derived from legs | `sum(STO prices) / sum(BTO prices)` — requires 4-leg STO/BTO structure |
-| `premium` | `premium` | `trades.trade_data.premium` | Net premium collected (negative = debit) |
-| `duration`, `hours` | `durationHours` | Computed | `(date_closed - date_opened)` in hours |
-| `gap` | `gap` | `trades.trade_data` via `get_field_statistics` | SPX gap on trade open day |
-| `movement` | `movement` | `trades.trade_data` via `get_field_statistics` | Underlying movement during trade |
-| `contracts` | `num_contracts` | `trades.trade_data.num_contracts` | Position size |
-| `margin` | `margin_req` | `trades.trade_data.margin_req` | Margin per trade |
-
-### Market Context Fields (from `market.daily` or `market._context_derived`, joined by trade date)
-
-| User Input | Internal Field | Source Table | Join Column | Lag Required |
-|------------|---------------|-------------|-------------|--------------|
-| `VIX`, `vix` | `close` | `market.daily` WHERE ticker='VIX' | `date = date_opened` | No (same-day open known) |
-| `VIX open` | `open` | `market.daily` WHERE ticker='VIX' | `date = date_opened` | No |
-| `RSI`, `rsi` | `RSI_14` | `market.daily` WHERE ticker='SPX' | `date = date_opened` | Yes (prior day) |
-| `RV5`, `realized vol` | `Realized_Vol_5D` | `market.daily` WHERE ticker='SPX' | `date = date_opened` | Yes (prior day) |
-| `RV20` | `Realized_Vol_20D` | `market.daily` WHERE ticker='SPX' | `date = date_opened` | Yes (prior day) |
-| `ATR` | `ATR_Pct` | `market.daily` WHERE ticker='SPX' | `date = date_opened` | Yes (prior day) |
-| `VIX IVR`, `ivr` | `ivr` | `market.daily` WHERE ticker='VIX' | `date = date_opened` | Yes (prior day) |
-| `VIX IVP`, `ivp` | `ivp` | `market.daily` WHERE ticker='VIX' | `date = date_opened` | Yes (prior day) |
-| `gap pct`, `gap%` | `Gap_Pct` | `market.daily` WHERE ticker='SPX' | `date = date_opened` | No (same-day) |
-| `EMA21`, `price vs ema` | `Price_vs_EMA21_Pct` | `market.daily` WHERE ticker='SPX' | `date = date_opened` | Yes (prior day) |
-| `SMA50`, `price vs sma` | `Price_vs_SMA50_Pct` | `market.daily` WHERE ticker='SPX' | `date = date_opened` | Yes (prior day) |
-
-**Lag rules:** Close-derived fields (RSI, RV, ATR, IVR, IVP, EMA, SMA) use the **prior trading day** value to prevent lookahead bias. Open-known fields (VIX open, Gap_Pct) use same-day values.
-
-If the user's input doesn't match any known field, ask: "Which field do you mean? Here are the available options: [list from tables above]."
-
-## Prerequisites
-
-- TradeBlocks MCP server running
-- At least one block with trade data loaded
-- For market context fields: market data must be imported (check with `run_sql` — if no rows match, suggest `/tradeblocks:market-data`)
-- Strategy profile recommended (for current filter settings)
+If user input doesn't match, list available fields and ask.
 
 ## Process
 
-### Step 1: Parse Argument and Select Target
+### Step 1: Parse Argument and Load Data
 
-1. **Parse the field argument** from the user's invocation (e.g., `/threshold-analysis VIX` -> field = VIX close).
-2. Use `list_blocks` to show available blocks if not already established.
-3. Ask which block and optionally which strategy to analyze.
-4. If a profile exists, load it with `get_strategy_profile` to find the **current threshold** for this field (search `entryFilters` for a matching field name). If no current setting exists, note "No current filter" — the chart will omit the "Current" reference line.
+1. Parse field argument (e.g., `/dev-threshold-analysis VIX O/N` -> field = `VIX_Gap_Pct`).
+2. Determine block from context or ask.
+3. Check for `{block_folder}/alex-tradeblocks-ref/entry_filter_data.csv`.
+   - **If exists:** Read directly. Report "Using cached filter data ({n} trades)."
+   - **If missing:** Build via shared Phase 1 pipeline (see Pareto skill), then read.
+4. Extract arrays: `field_val[]`, `rom_pct[]`, `pl_per_contract[]`. Drop rows where field is null/empty.
 
-### Step 2: Check Data Sufficiency
+### Step 2: Compute Baseline and Correlation
 
-Run ALL checks before proceeding. The checks depend on the field source.
+From the loaded arrays:
 
-**Universal checks:**
+- **Baseline Avg ROM:** `mean(rom_pct)`
+- **Baseline Net ROR:** `sum(rom_pct)`
+- **Win Rate:** `count(rom_pct > 0) / total * 100`
+- **Profit Factor:** `sum(positive roms) / abs(sum(negative roms))`
+- **Avg 1-Lot P/L:** `mean(pl_per_contract)`
+- **Correlation:** Pearson `r` between field_val and rom_pct
+- **Best fit:** least-squares `y = mx + b`, R^2
 
-```sql
--- Check 1: Trade count
-SELECT COUNT(*)::INT as trades FROM trades.trade_data WHERE block_id = '{blockId}'
-```
-**Minimum: 50 trades.** Report and stop if insufficient.
+**CRITICAL: ROM is already per-trade in the CSV.** Just average the `rom_pct` values within each group. Never re-derive from aggregate P/L.
 
-```sql
--- Check 2: Margin data (required for ROM)
-SELECT COUNT(CASE WHEN margin_req > 0 THEN 1 END)::INT as has_margin,
-       COUNT(*)::INT as total
-FROM trades.trade_data WHERE block_id = '{blockId}'
-```
-**All trades must have margin > 0.** Report and stop if missing.
+### Step 3: Generate Block Wrapper and Run
 
-**Field-specific checks:**
+Create a thin wrapper script at `{block_folder}/gen_{field_slug}_threshold.py` that imports the shared module:
 
-**For trade-level fields** (premium, duration, gap, movement, contracts, margin):
-```sql
--- Check 3a: Field has values and sufficient spread
-SELECT COUNT(*)::INT as non_null,
-       ROUND(MIN({field}), 4) as min_val,
-       ROUND(MAX({field}), 4) as max_val,
-       ROUND(STDDEV({field}), 4) as stddev
-FROM trades.trade_data WHERE block_id = '{blockId}' AND {field} IS NOT NULL
-```
-Use `get_field_statistics` for the field to get distribution. **Minimum: 90% non-null, stddev > 0.**
+```python
+#!/usr/bin/env python3
+"""Threshold analysis for {FIELD_LABEL} in {BLOCK_NAME}."""
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '_shared'))
+from gen_threshold_analysis import generate
 
-**For SLR (derived from legs):**
-```sql
--- Check 3b: Legs are parseable
-SELECT COUNT(*)::INT as total,
-       COUNT(CASE WHEN legs LIKE '%STO%' AND legs LIKE '%BTO%' THEN 1 END)::INT as parseable
-FROM trades.trade_data WHERE block_id = '{blockId}'
-```
-**All trades must be parseable.** Also check SLR spread >= 0.10.
-
-**For market context fields:**
-```sql
--- Check 3c: Market data exists for trade dates
-SELECT COUNT(*)::INT as trades_with_data
-FROM trades.trade_data t
-JOIN market.daily m ON m.ticker = '{ticker}' AND CAST(m.date AS DATE) = CAST(t.date_opened AS DATE)
-WHERE t.block_id = '{blockId}'
-```
-**Minimum: 90% of trades must have matching market data.** If < 90%, report: "Only {n}% of trades have {field} data. Run `/tradeblocks:market-data` to import missing data."
-
-**Pre-screen correlation:**
-
-Run `find_predictive_fields` with `targetField: "rom"` and check if the field appears with |correlation| >= 0.05. If correlation < 0.05, warn: "Correlation between {field} and ROM is only {r} — threshold analysis may not produce useful differentiation. Proceed anyway?"
-
-If any check fails, **stop and report** the specific issue. Do not proceed.
-
-### Step 3: Build the Analysis Query
-
-Construct the SQL to compute per-trade ROM at each threshold. The query structure depends on the field source.
-
-**CRITICAL: ROM must be computed per-trade FIRST, then averaged.** `rom_pct = pl / margin_req * 100` for each trade. Then `AVG(rom_pct)` within each threshold group.
-
-**Determine filter direction:**
-- Most fields use `>=` (higher = filter IN): SLR, premium, VIX IVR, duration
-- Some fields use `<=` (lower = filter IN): VIX level, RSI, gap (for negative gaps)
-- When ambiguous, check the correlation sign from `find_predictive_fields`. Positive correlation = `>=` filter. Negative correlation = `<=` filter.
-- Present both directions in the chart (gt and lt dots) regardless — let the data show which side is better.
-
-**For trade-level fields** (direct column):
-```sql
-WITH base AS (
-  SELECT
-    pl, margin_req, num_contracts,
-    pl / NULLIF(margin_req, 0) * 100 as rom_pct,
-    pl / num_contracts as pl_per_lot,
-    pl > 0 as is_win,
-    {field_expression} as field_val
-  FROM trades.trade_data
-  WHERE block_id = '{blockId}'
-)
-SELECT
-  ROUND(AVG(CASE WHEN field_val >= {t} THEN rom_pct END), 2) as gt_rom,
-  ROUND(AVG(CASE WHEN field_val < {t} THEN rom_pct END), 2) as lt_rom,
-  ROUND(SUM(CASE WHEN field_val >= {t} THEN rom_pct END), 2) as gt_net_ror,
-  ROUND(SUM(CASE WHEN field_val < {t} THEN rom_pct END), 2) as lt_net_ror,
-  ROUND(SUM(CASE WHEN field_val >= {t} AND rom_pct > 0 THEN rom_pct ELSE 0 END) /
-    NULLIF(ABS(SUM(CASE WHEN field_val >= {t} AND rom_pct < 0 THEN rom_pct ELSE 0 END)), 0), 2) as gt_pf,
-  ROUND(SUM(CASE WHEN field_val < {t} AND rom_pct > 0 THEN rom_pct ELSE 0 END) /
-    NULLIF(ABS(SUM(CASE WHEN field_val < {t} AND rom_pct < 0 THEN rom_pct ELSE 0 END)), 0), 2) as lt_pf,
-  ROUND(AVG(CASE WHEN field_val >= {t} THEN pl_per_lot END), 2) as gt_pl_lot,
-  COUNT(CASE WHEN field_val >= {t} THEN 1 END)::INT as gt_count,
-  COUNT(CASE WHEN field_val < {t} THEN 1 END)::INT as lt_count,
-  ...
-FROM base
+generate({
+    'block_folder': os.path.dirname(os.path.abspath(__file__)),
+    'block_name':   '{BLOCK_NAME}',
+    'field_col':    '{FIELD_COL}',
+    'field_label':  '{FIELD_LABEL}',
+    'field_slug':   '{field_slug}',
+    'oo_translate':  '{oo_type}',     # 'simple' | 'vix_on'
+    'show_zero_x':   {show_zero},     # True for fields spanning +/-
+    'subtitle_note': '{note}',
+})
 ```
 
-**For SLR (derived):**
-Use the regex pattern from the SLR skill:
-```sql
-(CAST(regexp_extract(legs, 'P STO ([0-9.]+)', 1) AS DOUBLE) +
- CAST(regexp_extract(legs, 'C STO ([0-9.]+)', 1) AS DOUBLE)) / NULLIF(
- CAST(regexp_extract(legs, 'P BTO ([0-9.]+)', 1) AS DOUBLE) +
- CAST(regexp_extract(legs, 'C BTO ([0-9.]+)', 1) AS DOUBLE), 0) as field_val
+Then run:
+```bash
+cd "{block_folder}"
+python3 gen_{field_slug}_threshold.py
 ```
 
-**For market context fields (joined):**
-```sql
-WITH base AS (
-  SELECT
-    t.pl, t.margin_req, t.num_contracts,
-    t.pl / NULLIF(t.margin_req, 0) * 100 as rom_pct,
-    t.pl / t.num_contracts as pl_per_lot,
-    t.pl > 0 as is_win,
-    m.{column} as field_val
-  FROM trades.trade_data t
-  JOIN market.daily m
-    ON m.ticker = '{ticker}'
-    AND CAST(m.date AS DATE) = {join_expression}
-  WHERE t.block_id = '{blockId}'
-)
+Output: `{block_folder}/entry_filter_threshold_{field_slug}.html`
+
+### Config Reference
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `block_folder` | str | yes | Absolute path to block directory |
+| `block_name` | str | yes | Display name for subtitle |
+| `field_col` | str | yes | CSV column name |
+| `field_label` | str | yes | Full display label (e.g., "VIX O/N Move (%)") |
+| `field_slug` | str | yes | Filename slug (e.g., "vix_on", "slr") |
+| `oo_translate` | str | no | OO translation mode: `'simple'` (default) or `'vix_on'` |
+| `show_zero_x` | bool | no | Show vertical 0-line for fields spanning +/-. Default `False` |
+| `subtitle_note` | str | no | Custom subtitle suffix. Default auto-generated |
+
+#### OO Translation Modes
+
+- **`simple`**: `Min {Field} = X` / `Max {Field} = X`. Use for SLR, VIX, RSI, premium, etc.
+- **`vix_on`**: Splits by sign: `Min O/N Move Up = X` / `Max O/N Move Down = X`. Use for VIX O/N only.
+
+### Step 4: Client-Side Threshold Computation (JavaScript in HTML)
+
+All threshold metrics are computed client-side at every unique field value for full resolution. The raw data is embedded as JSON.
+
+#### 4a. Threshold Data
+
+For each unique value `t` in the field (minimum 1 trade on each side):
+
+```
+gtRows = trades where field_val >= t
+ltRows = trades where field_val <= t
 ```
 
-Where `{join_expression}` is:
-- Same-day: `CAST(t.date_opened AS DATE)`
-- Prior-day (lagged): `(SELECT MAX(CAST(m2.date AS DATE)) FROM market.daily m2 WHERE m2.ticker = '{ticker}' AND CAST(m2.date AS DATE) < CAST(t.date_opened AS DATE))`
+Compute for each direction:
+- `gtRom` / `ltRom`: avg ROM of the group
+- `gtNet` / `ltNet`: sum ROM of the group
+- `gtN` / `ltN`: trade count
+- `gtWr` / `ltWr`: win rate
+- `gtPf` / `ltPf`: profit factor (capped at 99)
+- `gtRetained` / `ltRetained`: `groupNet / baselineNet * 100` (% of baseline Net ROR retained)
 
-**Generate thresholds:** Use `get_field_statistics` percentiles (p5, p10, p25, p50, p75, p90, p95) as anchor points, then fill in at regular intervals to get ~30-40 threshold points across the range.
+CDF lines (always 0% -> 100% left to right):
+- `pctTrades`: `count(field_val < t) / N * 100`
+- `pctNetRor`: `sum(rom where field_val < t) / baselineNet * 100`
 
-Run the threshold sweep in a single SQL query with conditional aggregation for all thresholds.
+Trades at exactly `t` appear in BOTH >= and <= groups (intentional -- boundary trades are the marginal case).
 
-**Also collect baseline metrics** (all trades, no filter):
-```sql
-SELECT
-  ROUND(AVG(rom_pct), 2) as baseline_rom,
-  ROUND(SUM(rom_pct), 2) as baseline_net_ror,
-  ROUND(SUM(CASE WHEN rom_pct > 0 THEN rom_pct ELSE 0 END) /
-    NULLIF(ABS(SUM(CASE WHEN rom_pct < 0 THEN rom_pct ELSE 0 END)), 0), 2) as baseline_pf,
-  ROUND(AVG(pl_per_lot), 2) as baseline_pl_lot,
-  ROUND(SUM(CASE WHEN is_win THEN 1 ELSE 0 END)::FLOAT / COUNT(*) * 100, 1) as baseline_wr,
-  COUNT(*)::INT as total_trades
-FROM base
-```
+#### 4b. Retention References
 
-**Metric definitions:**
-- **Avg ROR %**: Average of individual trade ROM values in the group
-- **Net ROR %**: Simple sum of all individual trade ROM values in the group — shows total cumulative return on risk
-- **Profit Factor**: `SUM(positive ROMs) / ABS(SUM(negative ROMs))` — computed on ROM basis, not raw P/L
+Standard levels: `[99, 95, 90, 80, 70, 60, 50]` r%
 
-### Step 4: Identify Zones and Recommendation
+**>= direction:** For each target, find the **highest** threshold where `gtRetained >= target` and `gtN >= 10`. Fallback: if no threshold qualifies, use min value (= all trades = baseline).
 
-Same logic as the SLR skill but field-agnostic:
+**<= direction:** For each target, find the **lowest** threshold where `ltRetained >= target` and `ltN >= 10`. Fallback: if no threshold qualifies, use max value (= all trades = baseline).
 
-| Zone | Criteria | Interpretation |
-|------|----------|----------------|
-| **No benefit** | ROM within 1pp of baseline AND gradient flat | Filtering here doesn't help |
-| **Sweet spot** | ROM rising smoothly, trades >= 25% of total, smooth gradient | Robust zone |
-| **High selectivity** | ROM high but trades < 25% of total | Too few trades to be reliable |
-| **Overfitting** | < 30 trades in the filtered group | Not actionable |
+**Combo [min, max]:** O(N^2) search over all `[lo, hi]` pairs from threshData. For each retention target, find the range that maximizes Avg ROM while `retained >= target` and `n >= 10`. Fallback: full range (= baseline).
 
-**Recommendation logic:**
-1. Find the threshold where ROM is >= 2pp above baseline (in the favorable direction)
-2. Verify smooth gradient at +/- one step
-3. Verify >= 30 trades in the filtered group
-4. If no threshold qualifies, report: "No clear {field} filter improvement found."
+Every retention level always has a row -- fallback ensures no gaps.
 
-### Step 5: Generate Interactive Chart
+#### 4c. Non-Monotonic Detection
 
-Save HTML to: `{block_folder}/{field_slug}_threshold_analysis.html`
+When you tighten a filter, you expect to steadily lose ROR. A **non-monotonic** result means the ROR dipped below the target on the path from baseline to this threshold, then bounced back -- typically because a large losing trade got excluded, canceling out a large winner that was also excluded. The threshold only hits the retention target due to coincidental cancellation, not systematic edge.
 
-Where `field_slug` is the field name in snake_case (e.g., `vix_close`, `opening_slr`, `premium`).
+**Detection:**
+- **>= refs:** Flag if any threshold `t' < ref.t` (wider filter) has `gtRetained < target`
+- **<= refs:** Flag if any threshold `t' > ref.t` (wider filter) has `ltRetained < target`
+- **Combo refs:** Flag if any wider range `[lo', hi']` (where `lo' <= ref.lo` and `hi' >= ref.hi`, not identical) has `retained < target`
 
-**Chart specification** (same as SLR skill but with dynamic labels):
+Display: warning icon with hover tooltip explaining the issue. Always show the value -- just flag it.
 
-- **Title:** `{Field Name} Threshold Analysis`
-- **Subtitle:** `{block_name} | {n} trades | Metric: Avg ROM (%) | Baseline ROM: {baseline}%`
-- **X-axis title:** `{Field Display Name}` (e.g., "VIX Close", "Opening S/L Ratio", "Premium ($)")
-- **X-axis range:** min to max of field data with 5% padding
-- **Left Y-axis:** "% Included in Analysis" (-10 to 110)
-- **Right Y-axis:** "Avg ROM (%)" — range auto-scaled to data with padding
-- **Scatter dots:**
-  - Orange (#e67e22): Avg ROM for trades on the **favorable side** of threshold (label: "High {Field}" or "Low {Field}" based on correlation direction)
-  - Purple (#9b59b6): Avg ROM for trades on the **unfavorable side**
-- **Lines:** % Trades Included and % P/L Included, building left to right (0% to 100%)
+**ELI5 footnote** below the table (orange): "As you tighten a filter, you expect to steadily lose ROR. A non-monotonic result means the ROR dipped below the target on the way to this threshold, then bounced back because a big loser got excluded. The reported threshold only hits the retention target because large winning and losing trades above/below it happen to cancel out -- not because of a systematic edge. Treat with caution."
+
+### Step 5: HTML Chart Specification
+
+Dark theme (#1a1a2e background), Chart.js 4.x + annotation plugin from CDN.
+
+**Layout order (top to bottom):**
+
+1. **Title + subtitle** (block name, trade count, baseline ROM, correlation, sweep description)
+2. **Metrics cards** (Total Trades, Baseline Avg ROM, Baseline Net ROR, Win Rate, Profit Factor, Correlation)
+3. **Threshold chart** (tall, 500px)
+4. **Retention References table**
+5. **Method note + non-monotonic ELI5**
+6. **Efficiency Frontier chart** (tall, 500px)
+7. **Scatter plot** (shorter, 350px)
+
+#### Threshold Chart
+
+- **Type:** Scatter with `showLine: true`
+- **Datasets:**
+  - Orange (#e67e22): `>= threshold (Avg ROM %)` -- yAxisID: `yRom`
+  - Purple (#9b59b6): `<= threshold (Avg ROM %)` -- yAxisID: `yRom`
+  - Blue (0.6 opacity, dashed): `% Trades (CDF)` -- yAxisID: `yPct`, pointRadius: 0
+  - Green (0.5 opacity, dashed): `% Net ROR (CDF)` -- yAxisID: `yPct`, pointRadius: 0
+- **Left Y-axis** (`yRom`): "Avg ROM (%)" -- auto-scaled with padding
+- **Right Y-axis** (`yPct`): "% of Total" -- range -5 to 110
+- **X-axis:** Field label, linear scale
 - **Annotations:**
-  - 0% ROM horizontal line (solid white, 0.3 opacity)
   - Baseline ROM horizontal dashed line with label
-  - Current filter value vertical dashed line (red) — from profile, if exists
-  - Recommended threshold vertical dashed line (green) — if one was found
-  - Thin Data box where trades < 30
-- **Comparison table** below chart:
-  - Columns: {Field} Filter, Avg ROR %, Net ROR %, Profit Factor, Avg 1-Lot P/L, Win Rate, Trades Retained
-  - Net ROR % = simple sum of individual trade ROM values in the filtered group
-  - Profit Factor = SUM(positive ROMs) / ABS(SUM(negative ROMs)) — computed on ROM basis, not raw P/L
-  - Rows: Current (red tag), Recommended (green tag), Delta
-  - Method note: "ROM = per-trade P/L / margin, then averaged across trades."
+  - 0% ROM horizontal line (white, 0.15 opacity)
+  - 0 x-axis vertical dashed line (for fields spanning positive/negative, controlled by `show_zero_x`)
+  - >= retention reference lines: **dashed [6,3]**, colored by retention level, span from **baseline ROM up to chart top**
+  - <= retention reference lines: **dotted [2,2]**, colored by retention level, span from **chart bottom up to baseline ROM**
+  - Thin data boxes: shaded regions where `< 30 trades` in either direction, with label
 
-### Step 6: Present Results
+#### Retention References Table
 
-Display chart location and markdown summary:
+- **Columns:** Threshold | ROR Retention | Avg ROM % | ROM Delta | Trades | % Trades | Win Rate | PF | Avg 1-Lot P/L | OO Filter
+- **Sections:**
+  1. **Baseline** row (blue BASE tag)
+  2. **>= direction** (orange header) -- dashed reference lines
+  3. **<= direction** (purple header) -- dotted reference lines
+  4. **Combo** (teal header) -- best [min, max] range
+- **Rows per section:** 99r%, 95r%, 90r%, 80r%, 70r%, 60r%, 50r% -- all always present (fallback to baseline)
+- **Styling:** Retention level color tags, green/red delta coloring, warning non-monotonic flags with hover tooltip
 
-**Tradeoff table:**
+#### Efficiency Frontier Chart
 
-| {Field} Threshold | Trades | % Kept | Win Rate | WR Delta | Avg ROM | ROM Delta | Net ROR | Profit Factor | Gradient |
-|-------------------|--------|--------|----------|----------|---------|-----------|---------|---------------|----------|
-| Baseline (all) | {n} | 100% | {wr}% | — | {rom}% | — | {net}% | {pf} | — |
-| {t1} | | | | | | | | | Smooth |
-| **{recommended}** | | | | | | | | | |
-| {t2} | | | | | | | | | |
+- **Type:** Scatter with `showLine: true`
+- **X-axis:** "% Total ROR Retained" -- **reversed** (100% on left), range 0-105
+- **Y-axis:** "Avg ROM (%)" -- auto-scaled
+- **Datasets:**
+  - Orange: `>= (Min threshold)` -- pointRadius 2
+  - Purple: `<= (Max threshold)` -- pointRadius 2
+  - Teal (#1abc9c): `Combo [min, max]` -- de-duplicated to distinct (x,y) points, pointRadius 4
 
-**Key findings:**
-- Correlation direction and strength
-- Where the favorable/unfavorable ROM dots diverge
-- Whether gradient is smooth or cliff
-- Tradeoff: ROM gained vs trades lost
+#### Scatter Plot
 
-### Step 7: Optional — Generate Blackout Dates
+- **Height:** 350px (shorter than other charts)
+- **Dots:** Blue for winners, red for losers, radius 4.5
+- **Best-fit line:** Orange, dashed, with equation + R^2 annotation
+- **Annotations:** Retention reference lines (lighter opacity)
 
-If the user wants dates to exclude in OO:
+### Step 6: Run and Open
 
-```sql
-SELECT strftime(CAST(date_opened AS DATE), '%Y-%m-%d') as trade_date
-FROM {base_query}
-WHERE field_val {unfavorable_operator} {recommended_threshold}
-ORDER BY trade_date
-```
+1. Execute: `python3 gen_{field_slug}_threshold.py`
+2. Open: `open entry_filter_threshold_{field_slug}.html`
+3. Report: baseline stats, correlation, and that the chart is open
 
-Output as comma-separated ISO dates.
-
-## Examples
-
-### `/threshold-analysis SLR`
-- Field: Opening S/L Ratio (derived from legs)
-- X-axis: "Opening S/L Ratio" (0.30 – 0.80 typical)
-- Direction: higher = better (positive correlation with ROM)
-- Current: from profile `min_short_long_ratio`
-
-### `/threshold-analysis VIX`
-- Field: VIX close (from market.daily)
-- X-axis: "VIX Close" (10 – 40 typical)
-- Direction: check correlation — often negative (lower VIX = better for short-DTE DCs)
-- Current: from profile `VIX_Close` entry filter if exists
-
-### `/threshold-analysis premium`
-- Field: Net premium collected
-- X-axis: "Premium ($)" (negative values = debit strategies)
-- Direction: check correlation — varies by structure
-- Note: Premium is negative in the trade data (debit). Display as absolute value or clarify sign convention.
-
-### `/threshold-analysis gap`
-- Field: SPX gap on trade open day
-- X-axis: "Gap (points)"
-- Direction: typically negative correlation (down gaps = better for DCs)
-- Source: `gap` column in trade data, or `Gap_Pct` from market.daily
-
-## Related Skills
-
-
-- `/tradeblocks:dc-analysis` — Uses threshold analysis as part of its workflow
-- `/tradeblocks:optimize` — Broader parameter exploration
-- `/tradeblocks:health-check` — Overall strategy health
-- `/tradeblocks:market-data` — Import market data if context fields are missing
+No markdown summary table or recommendation. The HTML is the deliverable.
 
 ## What NOT to Do
 
-- **Don't estimate ROM from average raw P&L.** Always compute `pl/margin_req` per trade first, then average. This is the single most important rule.
-- Don't recommend thresholds with fewer than 30 trades in the filtered group
-- Don't recommend where adjacent thresholds show a cliff (curve fitting)
-- Don't ignore that cut trades may be profitable — always show the tradeoff
-- Don't forget to check correlation direction before labeling "high" vs "low" as favorable
-- Don't use same-day close-derived fields without lagging — that's lookahead bias
-- Don't proceed without data sufficiency checks — missing market data silently drops trades from the analysis
+- **Don't duplicate chart code.** Always import from `gen_threshold_analysis.py` (skill-local). Block scripts are thin wrappers only.
+- **Don't estimate ROM from aggregate P/L.** `rom_pct` is already per-trade in the CSV. Just average it.
+- **Don't make a single recommendation.** Present retention references and let the user decide.
+- **Don't use SQL at runtime.** Everything comes from the CSV. The only SQL would be building the CSV if it doesn't exist.
+- **Don't skip retention levels.** Always report all 7 levels per section. Fallback to baseline if nothing qualifies.
+- **Don't hide non-monotonic results.** Show the value, flag it with warning icon.
+- **Don't use `< 5` trade cutoff for threshData.** Use `< 1` so lines extend to the full data range. Thin data boxes visually warn about sparse zones.
+- **Don't use same-day close-derived fields without lagging** -- that's lookahead bias. Lags are baked into the CSV.
+- **Don't open DuckDB connections from the script.** The script only reads CSV.
+
+## Files
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `gen_threshold_analysis.py` | skill-local | Shared chart generator module |
+| `gen_{slug}_threshold.py` | `{block_folder}/` | Block-specific thin wrapper |
+| `entry_filter_data.csv` | `{block_folder}/alex-tradeblocks-ref/` | Trade data input |
+| `entry_filter_threshold_{slug}.html` | `{block_folder}/` | Output chart |
+| `entry_filter_groups.default.csv` | skill-local | Field metadata |
+
+## Related Skills
+
+- `dev-entry-filter-pareto` -- Pareto chart of all filters (shares entry_filter_data.csv)
+- `dev-entry-filter-heatmap` -- Retention heatmap with discovery map (shares entry_filter_data.csv + groups CSV)
+- `dev-entry-filter-parallel-coords` -- Parallel coordinate plot (shares entry_filter_data.csv)
 
 ## Notes
 
-- The chart HTML uses Chart.js 4.x + annotation plugin from CDN
-- For market context fields, the underlying ticker defaults to SPX. If the block trades a different underlying, adjust the join accordingly.
-- Fields with bimodal distributions (e.g., gap: clustered around 0 with tails) may need non-uniform threshold spacing. Use percentile-based thresholds instead of linear intervals.
-- This skill supersedes `/slr-threshold-analysis` for SLR analysis. The SLR skill remains available for backwards compatibility.
+- Chart HTML uses Chart.js 4.x + annotation plugin from CDN. No other dependencies.
+- The entry_filter_data.csv is shared across all dev-entry-filter-* skills. Building any skill first creates the cache for all.
+- When reading from CSV, all lag rules and per-contract normalizations are already applied.
+- For fields spanning positive and negative (VIX O/N, Gap %, returns), set `show_zero_x: True`.
+- The OO translation function is field-specific. VIX O/N uses `'vix_on'` mode. All others use `'simple'`.
+- Combo O(N^2) search can be slow for very large threshData arrays. The `>= 10 trades` filter on survivors keeps it manageable for typical blocks (50-300 trades).
+- The shared module requires `numpy` for correlation and polyfit. All other computation is in client-side JS.
