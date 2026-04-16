@@ -7,7 +7,7 @@ description: >
 compatibility: Requires git, gh CLI, and access to the GitHub repo configured in alex_github_update_config.md.
 metadata:
   author: alex-tradeblocks
-  version: "1.2"
+  version: "1.3"
 ---
 
 # Dev GitHub Update
@@ -215,19 +215,36 @@ Apply the bump to **both** `plugin.json` (`version` field) and `marketplace.json
 
 ---
 
-## Step 4: Update Plugin Cache
+## Step 4: Verify Marketplace Clone & Instruct User
+
+**Important:** Do NOT run `claude plugins update` or `claude plugins install` from within a running Claude Code session. These CLI subcommands update filesystem state (cache directories, `installed_plugins.json`) but the parent Claude Code process does not reload its in-memory plugin registry. The result is a silent version mismatch — the cache files look correct but `/plugin` still shows the old version and new skills never appear.
 
 After push succeeds:
 
-1. Try: `claude plugins update {plugin_id}`
-2. Check the output. If it reports "already at the latest version" despite the push (known issue — the cache update may not detect the new version immediately):
-   - Run: `claude plugins uninstall {plugin_id}` then `claude plugins install {plugin_id}`
-   - This forces a fresh pull from GitHub.
-3. Report the current cache version vs the pushed plugin version:
+1. **Verify the marketplace clone is current.** The marketplace clone is the local git repo that `/plugin` → "Update now" reads from:
+   ```bash
+   marketplace_path="$HOME/.claude/plugins/marketplaces/{marketplace_name}"
+   git -C "$marketplace_path" log --oneline -1
    ```
-   Cache: current X.Y.Z (sha abc1234) → will update to X.Y.Z (sha def5678) on restart
+   Confirm the HEAD commit SHA matches the push from Step 3. If it doesn't (remote hasn't been fetched yet):
+   ```bash
+   git -C "$marketplace_path" pull origin main
    ```
-4. Prompt: *"Re-open Claude Code to pick up the refreshed skill cache. New skills won't be available until restart."*
+   Re-verify HEAD matches. Where `{marketplace_name}` comes from the config (it's the marketplace portion of `plugin_id`, i.e. the part after `@`).
+
+2. **Report and instruct the user.** The marketplace clone is now current — all the filesystem work is done. The in-memory plugin reload cannot be triggered programmatically; only the interactive `/plugin` UI can do it. Show the user this prompt:
+
+   ```
+   Published v{X.Y.Z} @ {sha}
+
+   Two steps to activate:
+     /plugin  →  "{plugin_id}"  →  "Update now"
+     Then restart Claude Code (/exit + relaunch)
+   ```
+
+   Do NOT add caveats, explanations, or apologies to the user prompt. Keep it exactly this concise.
+
+3. **Do NOT** modify `installed_plugins.json` directly, run `claude plugins update`, or attempt any other automated cache refresh from within the session.
 
 ---
 
@@ -243,7 +260,7 @@ Plugin version: X.Y.Z → X.Y.Z
   Added:   {published_prefix}skill-b (2.0), {published_prefix}skill-c (1.0)
   Skipped: N (no changes), M (excluded)
 Pushed: main @ abc1234
-Cache: X.Y.Z → will update to X.Y.Z on restart
+Cache: run /plugin → Update now, then restart to activate vX.Y.Z
 ```
 
 **Append to `$TB_ROOT/alex_github_update_log.md`:**
@@ -255,6 +272,7 @@ Cache: X.Y.Z → will update to X.Y.Z on restart
 - Added: {published_prefix}skill-b (2.0)
 - Skipped: N unchanged, M excluded
 - Pushed: main @ abc1234
+- Cache: run /plugin → Update now, then restart to activate vX.Y.Z
 ```
 
 Create the log file if it doesn't exist. Append-only — never truncate.
@@ -270,3 +288,4 @@ Create the log file if it doesn't exist. Append-only — never truncate.
 - Do not modify the skill body content during sync — only transform frontmatter fields (name, description prefix, version suffix).
 - Do not delete files in the repo that aren't in the dev folder (README, LICENSE, .gitignore, etc.).
 - Do not hardcode user-specific values (paths, repo names, prefixes) in this skill file. All user-specific values come from the config.
+- Do not run `claude plugins update`, `claude plugins install`, or `claude plugins uninstall` from within a Claude Code session. These update filesystem state but the running process doesn't reload — causing a silent version mismatch. Always direct the user to `/plugin` → "Update now" instead.
