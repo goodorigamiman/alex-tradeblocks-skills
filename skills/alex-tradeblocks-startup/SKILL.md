@@ -4,7 +4,7 @@ description: TradeBlocks startup check. Verifies MCP server, market data provide
 compatibility: Requires Docker. Market data provider (ThetaData, Massive, or other) and dev workspace layout are discovered from the local config — no assumptions baked in.
 metadata:
   author: alex-tradeblocks
-  version: "4.0"
+  version: "4.1"
 ---
 
 # Dev TradeBlocks Startup
@@ -243,18 +243,22 @@ For the MCP server (if `mcp_source: npm`):
 - Installed: `{mcp_image_tag}` from config
 - Compare (normalize `2.3` vs `2.3.0` to same form before comparing)
 
-**Output format — always emit inline in the main report as `Upstream vs Installed:` with exactly these four columns:**
+**Output format — always emit inline in the main report as `Upstream vs Installed:` with exactly these five columns:**
 
 ```
 Upstream vs Installed:
-  Component                  Upstream   Installed    Status
-  tradeblocks-skills         8bc00ac    8bc00ac      OK
-  alex-tradeblocks-skills    4cd6dbd    92c0237      DRIFT
-  tradeblocks-mcp (npm)      2.3.0      2.3          OK
+  Component                  Source                                           Upstream   Installed    Status
+  tradeblocks-skills         GitHub davidromeo/tradeblocks-skills             8bc00ac    8bc00ac      OK
+  alex-tradeblocks-skills    GitHub goodorigamiman/alex-tradeblocks-skills    4cd6dbd    92c0237      DRIFT
+  tradeblocks-mcp            npm registry (tradeblocks-mcp)                   2.3.0      2.3          OK
 ```
 
 Column rules:
-- **Component** — plugin id short name (strip the `@{marketplace}` suffix). MCP row is labeled `{mcp_package_name} (npm)` to make the version source explicit.
+- **Component** — plugin id short name (strip the `@{marketplace}` suffix). MCP row is labeled with just `{mcp_package_name}`; the `(npm)` suffix now lives in the Source column.
+- **Source** — where Upstream is fetched from, so the reader can trace any row without re-reading the skill.
+  - Plugin rows: `GitHub {owner}/{repo}` using the value from `plugin_marketplaces` in config.
+  - MCP row: `npm registry ({mcp_package_name})` when `mcp_source: npm`; `GHCR ({image})` when `mcp_source: ghcr`; otherwise the literal `mcp_source` value + package/image.
+  - Keep the column width consistent — pad to the longest Source string so the next columns stay aligned.
 - **Upstream** — 7-char sha from `gh api` for plugins; version string for the MCP row.
 - **Installed** — 7-char sha identifying the cache content. When `cache matches clone` → use `clone_sha[:7]`. When it doesn't match → show the `installed_plugins.json → gitCommitSha[:7]` with no decoration (Status column conveys the mismatch).
 - **Status** — exactly one of `OK` / `CACHE STALE` / `CLONE STALE` / `BOTH STALE` / `DRIFT`. Use the four-way classification above; `DRIFT` is a legacy alias for any non-OK state if the specific four-way breakdown isn't computed.
@@ -542,40 +546,78 @@ Note: EMPTY fields (e.g. ivr/ivp that have never been populated) should be repor
 
 ## Final Summary
 
-Emit the report as a single compact block. The two required tables — `Upstream vs Installed:` and `Market data coverage:` — appear **inline within this block**, not as separate detail sections below it. Exact layout:
+Emit the report as **markdown with explicit section headers and blank lines between sections** — not as a single fenced block. Readers scan by section; crowding everything into one block makes it hard to locate a specific table. Exact layout:
+
+````markdown
+## TradeBlocks Startup — YYYY-MM-DD HH:MM
+
+### Status
 
 ```
-TradeBlocks Startup — YYYY-MM-DD HH:MM
 [✓|✗] MCP Server        {image_tag}  · container: <up|down>  · session tools: <mounted|NOT mounted — QUIT & RELAUNCH CLAUDE CODE>
 [✓|✗] Market Provider   {provider}  · <status> (<endpoint>)
-[✓|✗] Skills            <OK|DRIFT>  [· dev: N skills (M ahead, K dev-only, J regressions)]
-[✓|✗] DuckDB            market: <date> (<current|stale>)  · analytics: OK
-Upstream vs Installed:
-  Component                  Upstream   Installed    Status
-  tradeblocks-skills         {sha}      {sha}        {OK|…}
-  alex-tradeblocks-skills    {sha}      {sha}        {OK|…}
-  tradeblocks-mcp (npm)      {ver}      {ver}        {OK|…}
-[Dev skills: N total · M ahead of cache · K dev-only · J regressions · CLAUDE.md registry updated]
-Market data coverage:
-  Ticker   Rows     Earliest      Latest
-  {sym}    {n:,}    {date}        {date}
-  ...
-  _context_derived: {n:,} rows through {date}
-Recovery actions: <list or "none">
-Config: {tb_root}/alex_tradeblocks_startup_config.md
+[✓|✗] Skills            <OK|DRIFT>  [· dev: N skills (K unpublished edits)]
+[✓|✗] DuckDB            market: <date> (<current|stale>)  · analytics: OK  [· enrichment STALE]
 ```
 
+### Upstream vs Installed
+
+```
+Component                  Source                                           Upstream   Installed    Status
+tradeblocks-skills         GitHub davidromeo/tradeblocks-skills             {sha}      {sha}        {OK|…}
+alex-tradeblocks-skills    GitHub {owner}/{repo}                            {sha}      {sha}        {OK|…}
+tradeblocks-mcp            npm registry (tradeblocks-mcp)                   {ver}      {ver}        {OK|…}
+```
+
+### Dev Skills
+
+N total · M ahead · K dev-only · J regressions · **P unpublished changes** · CLAUDE.md registry refreshed
+
+- `skill-name` (reason — e.g. "version bumped, not yet published", "body edits, version unchanged")
+- ...
+
+Fix: run `alex-github-update` to publish, or bump `-dev` version if edits are intentional drafts.
+
+### Market Data Coverage
+
+```
+Ticker   Rows     Earliest      Latest
+{sym}    {n:,}    {date}        {date}
+...
+
+_context_derived: {n:,} rows through {date}
+```
+
+### Calculated Fields
+
+N enriched daily cols · <status>
+
+```
+{ticker(s)}   {short field list} → {frozen date}  ({M bdays behind})
+...
+```
+
+Re-run enrichment to {latest raw date}? ({ticker list})
+
+### Recovery Actions
+
+- {what was done, or "none"}
+
+Config: `alex_tradeblocks_startup_config.md`
+````
+
 Rules:
-- **Both tables are always present.** Never compress either into a summary sentence, even when every row is OK. See the output-format blocks in Step 3A and Step 4B for exact column layouts and ordering (both are non-negotiable).
-- **Drop the `· dev: ...` suffix** on the Skills line, and **omit the `Dev skills: ...` one-liner** entirely, when `dev_skills_folder: none` in config.
-- **Drop enrichment line from the summary rows** — the `[✓|✗] DuckDB` line already folds market+analytics status; enrichment detail belongs in Step 4C output if/when stale.
-- **MCP Server Market Data combined into DuckDB row** to stay under 5 status lines. Staleness shows inline (`market: 2026-04-14 (stale — update to 2026-04-15?)`).
-- **No Tools & Skills table in the main summary.** It's redundant with Upstream vs Installed for plugins. If the user asks for skill counts, surface them on request, not by default.
-- **No DuckDB inventory table in the main summary.** It's detail-level and rarely changes; emit only when a table's status changes or when the user asks.
+- **Blank lines between sections are required.** Every `###` header has one blank line before and after. Inside a fenced code block, preserve internal spacing (e.g. the blank line separating ticker rows from `_context_derived`).
+- **Both tables are always present** (`Upstream vs Installed` and `Market Data Coverage`). Never compress either into a summary sentence, even when every row is OK. See the output-format blocks in Step 3A and Step 4B for exact column layouts and ordering.
+- **Omit the `### Dev Skills` section entirely** when `dev_skills_folder: none` in config. Also drop the `· dev: ...` suffix on the Status line.
+- **Omit the `### Calculated Fields` section** when every enriched field is current — no point padding the report with an "all green" line. Always emit when anything is STALE or EMPTY.
+- **`[✓|✗] DuckDB` row folds market + analytics**. Staleness shows inline (e.g. `market: 2026-04-14 (stale — update to 2026-04-15?)`); the `· enrichment STALE` tail appears only when Step 4C found stale fields.
+- **No Tools & Skills table in the main summary.** It's redundant with Upstream vs Installed. Emit only on explicit request.
+- **No DuckDB inventory table in the main summary.** Detail-level; emit only when a table's status changes or the user asks.
 
-When there's drift, staleness, or a recovery-required state, emit the specific fix **inline beneath the relevant row**, not in a separate prompts section. E.g. under a `CACHE STALE` row in `Upstream vs Installed:`, the next line reads `Fix: /plugin → {plugin_id} → Update now, then quit and relaunch Claude Code`.
+When there's drift, staleness, or a recovery-required state, emit the specific fix **inline beneath the relevant row**, not in a separate prompts section. E.g. under a `CACHE STALE` row in `Upstream vs Installed`, the next line reads `Fix: /plugin → {plugin_id} → Update now, then quit and relaunch Claude Code`.
 
-**Expanded detail sections** (DuckDB table inventory, Calculated fields breakdown, Tools & Skills) are emitted **only when the user explicitly asks** ("show me the tables", "break down enrichment") or when a failure condition requires them (e.g. DuckDB liveness probe fails → full table inventory follows automatically). Do not emit them as default padding.
+**Expanded detail sections** (DuckDB table inventory, full Calculated fields breakdown, Tools & Skills) are emitted **only when the user explicitly asks** ("show me the tables", "break down enrichment") or when a failure condition requires them (e.g. DuckDB liveness probe fails → full table inventory follows automatically). Do not emit them as default padding.
 
 ---
 
