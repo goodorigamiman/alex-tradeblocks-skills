@@ -7,7 +7,7 @@ description: >
 compatibility: Requires ThetaData terminal running on port 25503 and analytics.duckdb with trade data.
 metadata:
   author: alex-tradeblocks
-  version: "1.0"
+  version: "1.0.1"
 ---
 
 # Entry Filter Time — Intraday Premium Curve Builder
@@ -133,5 +133,5 @@ The direct version (`build_entry_filter_time_direct.py`) is recommended as it's 
 
 ## Related Skills
 
-- `dev-entry-filter-time-overlay` — Overlay chart of premium evolution using the CSV built by this skill
-- `dev-entry-filter-pareto` — Compare time-of-day filter against all other entry filters
+- `alex-entry-filter-time-overlay` — Overlay chart of premium evolution using the CSV built by this skill
+- `alex-entry-filter-pareto` — Compare time-of-day filter against all other entry filters

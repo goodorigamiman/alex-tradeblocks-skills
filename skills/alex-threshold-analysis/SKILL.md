@@ -7,7 +7,7 @@ description: >
 compatibility: Requires TradeBlocks MCP server with trade data loaded.
 metadata:
   author: alex-tradeblocks
-  version: "3.0"
+  version: "3.0.1"
 ---
 
 # Threshold Analysis
@@ -87,7 +87,7 @@ If user input doesn't match, list available fields and ask.
 
 ### Step 1: Parse Argument and Load Data
 
-1. Parse field argument (e.g., `/dev-threshold-analysis VIX O/N` -> field = `VIX_Gap_Pct`).
+1. Parse field argument (e.g., `/alex-threshold-analysis VIX O/N` -> field = `VIX_Gap_Pct`).
 2. Determine block from context or ask.
 3. Check for `{block_folder}/alex-tradeblocks-ref/entry_filter_data.csv`.
    - **If exists:** Read directly. Report "Using cached filter data ({n} trades)."
@@ -302,9 +302,9 @@ No markdown summary table or recommendation. The HTML is the deliverable.
 
 ## Related Skills
 
-- `dev-entry-filter-pareto` -- Pareto chart of all filters (shares entry_filter_data.csv)
-- `dev-entry-filter-heatmap` -- Retention heatmap with discovery map (shares entry_filter_data.csv + groups CSV)
-- `dev-entry-filter-parallel-coords` -- Parallel coordinate plot (shares entry_filter_data.csv)
+- `alex-entry-filter-pareto` -- Pareto chart of all filters (shares entry_filter_data.csv)
+- `alex-entry-filter-heatmap` -- Retention heatmap with discovery map (shares entry_filter_data.csv + groups CSV)
+- `alex-entry-filter-parallel-coords` -- Parallel coordinate plot (shares entry_filter_data.csv)
 
 ## Notes
 

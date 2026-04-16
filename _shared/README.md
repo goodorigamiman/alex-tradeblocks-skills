@@ -1,33 +1,63 @@
-# Alex-TradeBlocks-Skills — Supporting Files
+# Shared Supporting Files (`_shared/`)
 
-Reference data and dependencies used by alex-tradeblocks skills at runtime. These files are provisioned to your TradeBlocks Data working directory on first skill run.
+Reference data and SQL templates shared across multiple dev skills. These files are the **source of truth** for shared dependencies — they ship with the plugin (via `_shared/` in the repo, mirroring this dev folder's layout) and are copied to the plugin cache on install.
 
 ---
 
 ## Folder Organization
 
 ```
-Alex-TradeBlocks-Skills/
-  README.md                                  This file
-  entry_filter_groups.default.csv            Entry filter taxonomy and metadata
-  entry_filter_correlations.default.csv      Pairwise correlation matrix for market fields
-  entry_filter_holidays.default.csv          US options market holidays (2021-2026)
+Dev-TradeBlocks-Skills/
+  _shared/
+    README.md                                  This file
+    entry_filter_groups.default.csv            Entry filter taxonomy and metadata
+    entry_filter_correlations.default.csv      Pairwise correlation matrix for market fields
+    entry_filter_holidays.default.csv          US options market holidays (2021-2026)
+    phase1_entry_filter_data.default.sql       Phase 1 data query (CTE with joins)
+    phase1_sufficiency_checks.default.sql      Phase 1 pre-flight checks
 ```
 
 ### Naming Convention
 
 | Pattern | Meaning |
 |---------|---------|
-| `*.default.csv` | Shipped defaults — maintained by the plugin author |
-| `*.csv` (no `.default`) | User override — your customization, never overwritten |
+| `*.default.csv` / `*.default.sql` | Shipped defaults — maintained by the plugin author |
+| `*.csv` / `*.sql` (no `.default`) | User override — your customization, never overwritten |
 
-Skills resolve files in this order:
-1. File specified at invocation → use that
-2. User version (no `.default` suffix) → use that
-3. Local `.default` copy → use that
-4. Nothing found → copy from plugin cache, then use
+### How Files Flow
 
-To refresh defaults after a plugin update: delete or rename the local `.default.csv` file. The next skill run will re-provision from the updated cache.
+```
+_shared/ (dev)  →  repo/_shared/ (GitHub)  →  plugin cache  →  block folder (on first run)
+```
+
+1. **Dev:** you edit files here in `_shared/`
+2. **Publish:** `dev-github-update` copies `_shared/` contents to `repo/_shared/` during Step 2C
+3. **Cache:** users get the files when they install/update the plugin
+4. **Block:** on first skill run in a block, if the file doesn't already exist locally, it's copied from the cache
+
+### Resolution Order (at runtime)
+
+When a skill needs a shared file, it resolves in this order:
+
+1. **User specifies a file at invocation** → use that
+2. **User override exists** (no `.default` suffix) in `_shared/` → use that
+3. **Default copy exists** (`.default` suffix) in `_shared/` → use that
+4. **Neither exists** → copy `.default` from plugin cache to `_shared/`, then use it
+
+To refresh defaults after a plugin update: delete or rename the local `.default` file. The next skill run will re-provision from the updated cache.
+
+### Skill-Local Python Modules
+
+Each skill that generates a report has its own `.py` module **inside its skill folder** (not in `_shared/`):
+
+| Module | Skill Folder | Purpose |
+|--------|-------------|---------|
+| `build_pareto_report.py` | `dev-entry-filter-pareto/` | Pareto chart generator |
+| `gen_heatmap.py` | `dev-entry-filter-heatmap/` | Heatmap generator |
+| `build_parallel_coords.py` | `dev-entry-filter-parallel-coords/` | Parallel coords chart |
+| `gen_threshold_analysis.py` | `dev-threshold-analysis/` | Threshold sweep chart |
+
+These modules use `sys.path.insert` to reference `_shared/` for CSV/SQL imports. They are NOT stored in `_shared/` — they travel with their skill and are copied to the cache alongside the skill's `SKILL.md`.
 
 ---
 
@@ -80,9 +110,9 @@ To refresh defaults after a plugin update: delete or rename the local `.default.
 **How to Recreate:**
 1. Run `describe_database` to discover all available market fields
 2. Query OO documentation (`docs.optionomega.com/llms-full.txt`) for native entry filters
-3. Map OO filters to TB fields by matching semantics (e.g., OO "VIX Filter" → TB `VIX_Close`)
+3. Map OO filters to TB fields by matching semantics (e.g., OO "VIX Filter" -> TB `VIX_Close`)
 4. Run pairwise `corr()` queries across all market fields from `market.daily` and `market._context_derived` (SPX + VIX + VIX9D + VIX3M) since 2006
-5. Cluster fields with r > 0.77 into groups; assign letters A–H
+5. Cluster fields with r > 0.77 into groups; assign letters A-H
 6. Write implication notes based on redundancy (r > 0.87 = near-redundant, flag for single-representative selection)
 
 ---
@@ -112,16 +142,16 @@ To refresh defaults after a plugin update: delete or rename the local `.default.
 
 **Key Findings:**
 - 59 candidate entry filters collapse to ~8 independent signal types
-- Within Group A (Volatility Level), most pairs exceed r = 0.87 — a single representative (VIX_Close or ATR_Pct) captures the cluster
-- VIX_IVR and VIX_IVP (Group B) are r = 0.84 with each other but only ~0.53–0.65 with VIX level, justifying a separate group
-- SMA50 and EMA21 (Group C) are r = 0.89 — near-redundant; pick one
-- Calendar fields (Group E) show r < 0.03 with all market fields — fully independent structural effects
+- Within Group A (Volatility Level), most pairs exceed r = 0.87 -- a single representative (VIX_Close or ATR_Pct) captures the cluster
+- VIX_IVR and VIX_IVP (Group B) are r = 0.84 with each other but only ~0.53-0.65 with VIX level, justifying a separate group
+- SMA50 and EMA21 (Group C) are r = 0.89 -- near-redundant; pick one
+- Calendar fields (Group E) show r < 0.03 with all market fields -- fully independent structural effects
 - Gap_Filled is the most independent binary field (r < 0.03 with everything)
 
 **Scope & Limitations:**
 - Correlations are computed on the full SPX dataset since 2006. Subsetting to specific regimes or time periods may yield different structure.
 - Pearson correlation captures linear relationships only. Non-linear dependencies (e.g., VIX level may matter more at extremes) are not reflected.
-- Premium & Structure fields are excluded — they are trade-specific and cannot be correlated against market fields without a block context.
+- Premium & Structure fields are excluded -- they are trade-specific and cannot be correlated against market fields without a block context.
 - The matrix covers 73 selected pairs, not all possible N*(N-1)/2 combinations. Pairs were chosen based on within-group and cross-group relevance.
 
 **How to Recreate:**
@@ -153,6 +183,16 @@ To refresh defaults after a plugin update: delete or rename the local `.default.
 
 ---
 
+### `phase1_entry_filter_data.default.sql`
+
+**Purpose:** Main CTE query that builds the entry filter data CSV. Joins trade data with market data and computes all filter columns.
+
+### `phase1_sufficiency_checks.default.sql`
+
+**Purpose:** Pre-flight checks run before the Phase 1 data query. Validates trade count, market data coverage, and join completeness.
+
+---
+
 ## Version History
 
 | Version | Date | Changes |
@@ -160,3 +200,5 @@ To refresh defaults after a plugin update: delete or rename the local `.default.
 | 1.0 | 2026-04-12 | Initial release: entry_filter_groups.default.csv (38 filters, 8 groups) and entry_filter_correlations.default.csv (73 pairs) |
 | 1.1 | 2026-04-14 | Added entry_filter_holidays.default.csv (71 US options market holidays, 2021-2026) |
 | 1.2 | 2026-04-14 | Expanded entry_filter_groups to 59 filters (was 38). Restored Entry Groups B/F/G. Added SMA 5/10/20/50/200 (daily), EMA 5/13/21/50 (min), 4 holiday proximity columns (continuous). Fixed phase1 SQL VIX_Gap_Pct reference. Added {ticker} placeholder to phase1 SQL. |
+| 1.3 | 2026-04-16 | Migrated from Alex-TradeBlocks-Skills/ to Dev-TradeBlocks-Skills/_shared/. Removed stale .py duplicates (now skill-local). Added SQL template documentation. |
+| 1.4 | 2026-04-16 | Repo-side rename: `Alex-TradeBlocks-Skills/` → `_shared/` so the repo mirrors the dev folder. `dev-github-update` bumped to 1.5-dev to handle the rename + stale-destination cleanup. |

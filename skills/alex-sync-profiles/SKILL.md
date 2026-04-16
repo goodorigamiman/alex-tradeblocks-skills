@@ -8,10 +8,10 @@ description: >
 compatibility: Requires TradeBlocks MCP server. Reads trade_profile.json from each block folder; calls profile_strategy MCP tool to write.
 metadata:
   author: alex-tradeblocks
-  version: "1.0"
+  version: "1.0.1"
 ---
 
-# dev-sync-profiles
+# alex-sync-profiles
 
 `trade_profile.json` is the declared source of truth for strategy profiles, but `profiles.strategy_profiles` in `analytics.duckdb` is what the MCP tools actually read. Today nothing automatically reconciles the two. This skill closes the gap.
 

@@ -8,7 +8,7 @@ description: >
 compatibility: Requires TradeBlocks MCP server with trade data and market data loaded.
 metadata:
   author: alex-tradeblocks
-  version: "3.0"
+  version: "3.0.1"
 ---
 
 # Entry Filter Pareto
@@ -353,7 +353,7 @@ The table has group header rows separating sections. Within each group, sort by 
 - Rank filters by |correlation| — which have genuine predictive power vs noise (> 0.10 threshold)
 - Flag any filters retaining > 80% of net ROR (strong standalone candidates)
 - Binary/categorical summary: any standout findings (e.g., "OpEx trades underperform by 3pp")
-- Suggestion for next step: run `dev-threshold-analysis` for deep dive on top candidates
+- Suggestion for next step: run `alex-threshold-analysis` for deep dive on top candidates
 
 ### Step 13: Present Results
 
@@ -399,7 +399,7 @@ Display chart location and markdown summary:
 
 ## Related Skills
 
-- `dev-threshold-analysis` — Deep dive into a single filter with full threshold sweep chart
+- `alex-threshold-analysis` — Deep dive into a single filter with full threshold sweep chart
 - `/tradeblocks:dc-analysis` — Comprehensive DC strategy analysis (includes filter evaluation)
 - `/tradeblocks:optimize` — Broader parameter exploration
 

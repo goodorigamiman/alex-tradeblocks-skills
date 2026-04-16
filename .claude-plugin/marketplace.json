@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "Custom TradeBlocks skills for Option Omega backtest analysis and options trading portfolios",
-    "version": "2.0.2"
+    "version": "2.1.0"
   },
   "plugins": [
     {
@@ -25,8 +25,7 @@
         "./skills/alex-normalize-statistics",
         "./skills/alex-sync-profiles",
         "./skills/alex-threshold-analysis",
-        "./skills/alex-tradeblocks-startup",
-        "./skills/example-skill"
+        "./skills/alex-tradeblocks-startup"
       ]
     }
   ]

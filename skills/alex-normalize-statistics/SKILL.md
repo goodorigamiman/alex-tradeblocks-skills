@@ -8,10 +8,10 @@ description: >
 compatibility: Requires TradeBlocks MCP server with trade data loaded. Block must have margin_req and num_contracts populated on trades.
 metadata:
   author: alex-tradeblocks
-  version: "1.0"
+  version: "1.0.1"
 ---
 
-# dev-normalize-statistics
+# alex-normalize-statistics
 
 When the user asks for stats on a block (or runs `get_statistics`), they expect the report in **per-contract, return-on-margin** terms — not raw totals. This skill is the standard procedure.
 

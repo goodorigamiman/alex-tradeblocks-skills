@@ -7,7 +7,7 @@ description: >
 compatibility: Requires entry_filter_time_data.csv (built by dev-entry-filter-time skill).
 metadata:
   author: alex-tradeblocks
-  version: "1.0"
+  version: "1.0.1"
 ---
 
 # Entry Filter Time Overlay
@@ -22,7 +22,7 @@ consistently better time to enter?"
 ## Prerequisites
 
 - `entry_filter_time_data.csv` in `{block_folder}/alex-tradeblocks-ref/`
-  (built by the `dev-entry-filter-time` skill)
+  (built by the `alex-entry-filter-time` skill)
 
 No database access needed. No MCP calls. Reads only from the CSV.
 
@@ -100,16 +100,16 @@ Follows `overlay_trade_replays.md` exactly:
 |------|----------|---------|
 | `gen_entry_filter_time_overlay.py` | `{block_folder}/` | Chart generator script |
 | `entry_filter_time_overlay.html` | `{block_folder}/alex-tradeblocks-ref/` | Output chart |
-| `entry_filter_time_data.csv` | `{block_folder}/alex-tradeblocks-ref/` | Input data (from dev-entry-filter-time) |
+| `entry_filter_time_data.csv` | `{block_folder}/alex-tradeblocks-ref/` | Input data (from alex-entry-filter-time) |
 
 ## Related Skills
 
-- `dev-entry-filter-time` — Builds the entry_filter_time_data.csv that this skill visualizes
-- `dev-entry-filter-pareto` — Compare time-of-day filter against all other entry filters
+- `alex-entry-filter-time` — Builds the entry_filter_time_data.csv that this skill visualizes
+- `alex-entry-filter-pareto` — Compare time-of-day filter against all other entry filters
 
 ## What NOT to Do
 
-- **Don't run without entry_filter_time_data.csv** — this skill requires the CSV built by `dev-entry-filter-time`. Run that first.
+- **Don't run without entry_filter_time_data.csv** — this skill requires the CSV built by `alex-entry-filter-time`. Run that first.
 - **Don't modify the CSV format** — the overlay chart expects exact column names (HH:MM format for each minute).
 - **Don't average premium across trades before plotting** — plot each trade individually, then compute percentile bands.
 

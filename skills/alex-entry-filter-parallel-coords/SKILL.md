@@ -7,7 +7,7 @@ description: >
 compatibility: Requires TradeBlocks MCP server with trade data and market data loaded.
 metadata:
   author: alex-tradeblocks
-  version: "2.0"
+  version: "2.0.1"
 ---
 
 # Entry Filter Parallel Coordinates
@@ -53,7 +53,7 @@ generate({
 
 ## Two-Phase Architecture
 
-**Phase 1 (Data):** Identical to dev-entry-filter-pareto. Builds `entry_filter_data.csv` with one row per trade, one column per filter. Cached — skips if CSV exists.
+**Phase 1 (Data):** Identical to alex-entry-filter-pareto. Builds `entry_filter_data.csv` with one row per trade, one column per filter. Cached — skips if CSV exists.
 
 **Phase 2 (Visualization):** Read data CSV + entry_filter_groups CSV → build DIMS array from Report V1 filters → generate self-contained D3.js parallel coordinate HTML. Phase 2 is fully handled by the shared module.
 
@@ -68,7 +68,7 @@ generate({
 
 ### entry_filter_groups CSV
 
-Same file, same resolution order as dev-entry-filter-pareto:
+Same file, same resolution order as alex-entry-filter-pareto:
 1. User specifies a file at invocation → use that
 2. `_shared/entry_filter_groups.csv` (no `.default`) → use that
 3. `_shared/entry_filter_groups.default.csv` → use that
@@ -87,7 +87,7 @@ Same file, same resolution order as dev-entry-filter-pareto:
 
 ### entry_filter_data.csv (Phase 1 output)
 
-One row per trade, columns: `date_opened`, `pl_per_contract`, `margin_per_contract`, `rom_pct`, plus all filter columns. This is the SAME file built by dev-entry-filter-pareto.
+One row per trade, columns: `date_opened`, `pl_per_contract`, `margin_per_contract`, `rom_pct`, plus all filter columns. This is the SAME file built by alex-entry-filter-pareto.
 
 ## Outputs
 
@@ -118,17 +118,17 @@ One row per trade, columns: `date_opened`, `pl_per_contract`, `margin_per_contra
 
 1. Check if `{block_folder}/alex-tradeblocks-ref/entry_filter_data.csv` exists.
 2. **If it exists:** "Using cached filter data." **Skip to Step 7.**
-3. **If not:** Run Phase 1 (Steps 4–6) — identical to dev-entry-filter-pareto Steps 4–6.
+3. **If not:** Run Phase 1 (Steps 4–6) — identical to alex-entry-filter-pareto Steps 4–6.
 
 ### Steps 4–6: Phase 1 (Data CSV)
 
-**Identical to dev-entry-filter-pareto.** The SQL lives in shared files in `_shared/`:
+**Identical to alex-entry-filter-pareto.** The SQL lives in shared files in `_shared/`:
 
 - **Step 4:** Run sufficiency checks from `phase1_sufficiency_checks.default.sql` (replace `{blockId}`, execute each tagged query)
 - **Step 5:** Run the data CTE from `phase1_entry_filter_data.default.sql` (replace `{blockId}`, execute via `run_sql`)
 - **Step 6:** Write query results to `alex-tradeblocks-ref/entry_filter_data.csv`
 
-See dev-entry-filter-pareto Steps 4–6 for detailed interpretation rules (coverage thresholds, SLR fallback, VIX_Gap_Pct handling).
+See alex-entry-filter-pareto Steps 4–6 for detailed interpretation rules (coverage thresholds, SLR fallback, VIX_Gap_Pct handling).
 
 ---
 
@@ -427,13 +427,13 @@ svg.append('line')
 
 ## Related Skills
 
-- `dev-entry-filter-pareto` — Pareto chart of same filters (bar chart view, shares data CSV)
-- `dev-threshold-analysis` — Deep dive into a single filter
+- `alex-entry-filter-pareto` — Pareto chart of same filters (bar chart view, shares data CSV)
+- `alex-threshold-analysis` — Deep dive into a single filter
 - `/tradeblocks:dc-analysis` — Comprehensive DC strategy analysis
 
 ## Notes
 
-- The data CSV is shared with dev-entry-filter-pareto. Building either skill first creates the cache for both.
+- The data CSV is shared with alex-entry-filter-pareto. Building either skill first creates the cache for both.
 - D3.js v7 from CDN by default. Inline option available for offline use (~900KB).
 - Canvas handles 7000+ trade lines smoothly. For blocks with < 500 trades, SVG-only rendering would also work but Canvas is used for consistency.
 - Binary axes (Gap_Filled, Is_Opex) render as two-tick axes (0/1 with Yes/No labels). Trades cluster on two horizontal lines — brush one value to isolate.

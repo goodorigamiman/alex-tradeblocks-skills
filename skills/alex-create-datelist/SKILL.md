@@ -8,7 +8,7 @@ description: >
 compatibility: Requires TradeBlocks MCP server with trade data loaded.
 metadata:
   author: alex-tradeblocks
-  version: "1.0"
+  version: "1.0.1"
 ---
 
 # Create Datelist
@@ -187,9 +187,9 @@ If yes, repeat Step 6 with the excluded dates and an appropriate label describin
 
 ## Related Skills
 
-- `dev-threshold-analysis` — Find optimal threshold before generating datelist
-- `dev-entry-filter-pareto` — Compare all filters to pick the best one
-- `dev-entry-filter-parallel-coords` — Visual multi-filter exploration
+- `alex-threshold-analysis` — Find optimal threshold before generating datelist
+- `alex-entry-filter-pareto` — Compare all filters to pick the best one
+- `alex-entry-filter-parallel-coords` — Visual multi-filter exploration
 
 ## Notes
 

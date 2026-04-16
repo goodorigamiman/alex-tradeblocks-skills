@@ -8,7 +8,7 @@ description: >
 compatibility: Requires TradeBlocks MCP server with trade data loaded.
 metadata:
   author: alex-tradeblocks
-  version: "1.0"
+  version: "1.0.1"
 ---
 
 # Enrich Market Holiday Proximity
@@ -138,10 +138,10 @@ If `entry_filter_holidays.default.csv` doesn't exist, create it with this data o
 
 ## Related Skills
 
-- `dev-threshold-analysis` — Sweep Days_to_Holiday or Weeks_to_Holiday to find optimal filter thresholds
-- `dev-entry-filter-pareto` — Compare holiday proximity filters against all other entry filters
-- `dev-entry-filter-parallel-coords` — Visualize holiday proximity alongside other filter dimensions
-- `dev-create-datelist` — Generate OO-compatible datelist excluding/including holiday-adjacent dates
+- `alex-threshold-analysis` — Sweep Days_to_Holiday or Weeks_to_Holiday to find optimal filter thresholds
+- `alex-entry-filter-pareto` — Compare holiday proximity filters against all other entry filters
+- `alex-entry-filter-parallel-coords` — Visualize holiday proximity alongside other filter dimensions
+- `alex-create-datelist` — Generate OO-compatible datelist excluding/including holiday-adjacent dates
 
 ## Notes
 

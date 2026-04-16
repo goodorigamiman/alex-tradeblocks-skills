@@ -8,7 +8,7 @@ description: >
 compatibility: Requires TradeBlocks MCP server with trade data and market data loaded.
 metadata:
   author: alex-tradeblocks
-  version: "2.0"
+  version: "2.0.1"
 ---
 
 # Entry Filter Retention Heatmap
@@ -292,9 +292,9 @@ td[rowspan] { vertical-align: middle; text-align: left; font-weight: 600; color:
 
 | Skill | Relationship |
 |-------|-------------|
-| `dev-entry-filter-pareto` | Pareto shows optimal threshold per filter side-by-side. Heatmap shows the full retention curve. |
-| `dev-threshold-analysis` | Deep dive on a single filter with interactive chart. Heatmap is the summary view. |
-| `dev-create-datelist` | Generate OO-compatible date lists from filter criteria identified in the heatmap. |
+| `alex-entry-filter-pareto` | Pareto shows optimal threshold per filter side-by-side. Heatmap shows the full retention curve. |
+| `alex-threshold-analysis` | Deep dive on a single filter with interactive chart. Heatmap is the summary view. |
+| `alex-create-datelist` | Generate OO-compatible date lists from filter criteria identified in the heatmap. |
 
 ---
 
