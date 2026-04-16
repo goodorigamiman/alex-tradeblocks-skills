@@ -1,21 +1,21 @@
 ---
 name: alex-tradeblocks-startup
-description: TradeBlocks startup check. Verifies MCP server, market data provider, skills (published + local dev), and DuckDB databases. Auto-starts services if down. Reads `startup_config.md` in the TradeBlocks Data root for user-specific paths and settings; on first run, discovers values and writes the config. Use at session start or when TradeBlocks tooling feels broken.
+description: TradeBlocks startup check. Verifies MCP server, market data provider, skills (published + local dev), and DuckDB databases. Auto-starts services if down. Reads `alex_tradeblocks_startup_config.md` in the TradeBlocks Data root for user-specific paths and settings; on first run, discovers values and writes the config. Use at session start or when TradeBlocks tooling feels broken.
 compatibility: Requires Docker. Market data provider (ThetaData, Massive, or other) and dev workspace layout are discovered from the local config — no assumptions baked in.
 metadata:
   author: alex-tradeblocks
-  version: "3.0"
+  version: "3.1"
 ---
 
 # Dev TradeBlocks Startup
 
-Walk through the health checks in order (MCP server, market provider, skills inventory, DuckDB databases + data freshness + enrichment). For each: probe, report, and auto-recover if possible. Record recovery steps to `startup_log.md`. The skill is **config-driven**: on first run it discovers user-specific values and writes `startup_config.md`; on subsequent runs it reads that file first and uses the stored paths, provider choice, repo sources, etc.
+Walk through the health checks in order (MCP server, market provider, skills inventory, DuckDB databases + data freshness + enrichment). For each: probe, report, and auto-recover if possible. Record recovery steps to `alex_tradeblocks_startup_log.md`. The skill is **config-driven**: on first run it discovers user-specific values and writes `alex_tradeblocks_startup_config.md`; on subsequent runs it reads that file first and uses the stored paths, provider choice, repo sources, etc.
 
 ---
 
 ## Step 0: Load (or Create) Local Config
 
-Look for `$TB_ROOT/startup_config.md` (where `$TB_ROOT` is the TradeBlocks Data root — typically the current working directory, or the nearest ancestor containing `analytics.duckdb` and `market.duckdb`).
+Look for `$TB_ROOT/alex_tradeblocks_startup_config.md` (where `$TB_ROOT` is the TradeBlocks Data root — typically the current working directory, or the nearest ancestor containing `analytics.duckdb` and `market.duckdb`).
 
 ### If config exists
 
@@ -23,7 +23,7 @@ Look for `$TB_ROOT/startup_config.md` (where `$TB_ROOT` is the TradeBlocks Data 
 
 ```python
 import re, yaml, pathlib
-txt = pathlib.Path('startup_config.md').read_text()
+txt = pathlib.Path('alex_tradeblocks_startup_config.md').read_text()
 fm = re.search(r'^---\n(.*?)\n---', txt, re.DOTALL).group(1)
 config = yaml.safe_load(fm)
 # config is now a dict with all nested keys intact
@@ -51,13 +51,13 @@ Detect the following by probing, then present the detected values to the user an
 | `plugin_marketplaces` | Parse `~/.claude/plugins/installed_plugins.json` — each plugin id → its `extraKnownMarketplaces` entry in `~/.claude/settings.json` has the GH repo |
 | `legacy_tables_ignore` | Ask the user if they have any tables in `market.duckdb` that show stale dates but are known deprecated. Default empty. |
 
-Write the result to `$TB_ROOT/startup_config.md` using the schema in the Config Schema section below.
+Write the result to `$TB_ROOT/alex_tradeblocks_startup_config.md` using the schema in the Config Schema section below.
 
-**Never write user-specific values (paths, repo names, provider choice) into the SKILL.md itself.** That file is the published skill; it gets overwritten on update. All user-specific state lives in `startup_config.md` which the skill only creates, never overwrites.
+**Never write user-specific values (paths, repo names, provider choice) into the SKILL.md itself.** That file is the published skill; it gets overwritten on update. All user-specific state lives in `alex_tradeblocks_startup_config.md` which the skill only creates, never overwrites.
 
 ### Updating an existing config
 
-If values change (user moves dev folder, swaps provider, bumps MCP image), the user should edit `startup_config.md` by hand. The skill detects drift and prompts — it does not silently overwrite.
+If values change (user moves dev folder, swaps provider, bumps MCP image), the user should edit `alex_tradeblocks_startup_config.md` by hand. The skill detects drift and prompts — it does not silently overwrite.
 
 ---
 
@@ -394,7 +394,7 @@ TradeBlocks Startup — YYYY-MM-DD HH:MM
 [✓|✗] Enrichment        N fields · all current (or: K STALE — re-run enrichment?)
 
 Recovery actions this session: <list or "none">
-Config: {tb_root}/startup_config.md
+Config: {tb_root}/alex_tradeblocks_startup_config.md
 ```
 
 Then emit the detail sections (each only if non-empty or always shown):
@@ -409,7 +409,7 @@ Then emit the detail sections (each only if non-empty or always shown):
 
 ---
 
-## Recovery Log (`startup_log.md`)
+## Recovery Log (`alex_tradeblocks_startup_log.md`)
 
 Only append when recovery actions were taken. Format:
 
@@ -422,7 +422,7 @@ One bullet per action with the exact command used. Serves as a reference for rep
 
 ---
 
-## Config Schema (`startup_config.md`)
+## Config Schema (`alex_tradeblocks_startup_config.md`)
 
 Use this template when writing the config file on first run. YAML frontmatter holds parsed values; the body is free-form notes.
 
@@ -479,7 +479,7 @@ Edit by hand if your environment changes (e.g. switching providers, moving the d
 
 ## What Goes Where — Design Rules
 
-| Belongs in `SKILL.md` (published) | Belongs in `startup_config.md` (local) |
+| Belongs in `SKILL.md` (published) | Belongs in `alex_tradeblocks_startup_config.md` (local) |
 |---|---|
 | The four-step process | TradeBlocks Data root path |
 | Probe logic (generic) | Dev skills folder (if any, and where) |
@@ -491,14 +491,14 @@ Edit by hand if your environment changes (e.g. switching providers, moving the d
 |  | Legacy tables/fields to ignore |
 |  | Free-form quirks specific to this install |
 
-If a future skill version needs to change *how* a thing works (e.g. different probe endpoint because the provider API changed), update `SKILL.md`. If the *value* of something changes (e.g. user moved to a new TB data root), edit `startup_config.md`.
+If a future skill version needs to change *how* a thing works (e.g. different probe endpoint because the provider API changed), update `SKILL.md`. If the *value* of something changes (e.g. user moved to a new TB data root), edit `alex_tradeblocks_startup_config.md`.
 
 ---
 
 ## What NOT to Do
 
 - Do not hardcode user paths, repo names, or provider choices in `SKILL.md`.
-- Do not overwrite `startup_config.md` on any run except the very first. Subsequent runs may only append notes under existing sections if explicitly asked.
+- Do not overwrite `alex_tradeblocks_startup_config.md` on any run except the very first. Subsequent runs may only append notes under existing sections if explicitly asked.
 - Do not silently ignore config drift — if detected values don't match the config, surface it and ask.
 - Do not force-kill processes or containers without user confirmation.
 - Do not auto-run the market data update or enrichment re-run — only prompt and wait for user confirmation.

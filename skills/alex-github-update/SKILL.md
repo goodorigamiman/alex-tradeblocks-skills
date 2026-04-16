@@ -3,11 +3,11 @@ name: alex-github-update
 description: >
   Publish dev skills to the GitHub marketplace. Audits versions against cache, flags content
   changes without version bumps, syncs files to the repo with name/version transforms, commits,
-  pushes, and triggers cache update. Config-driven — builds github_update_config.md on first run.
-compatibility: Requires git, gh CLI, and access to the GitHub repo configured in github_update_config.md.
+  pushes, and triggers cache update. Config-driven — builds alex_github_update_config.md on first run.
+compatibility: Requires git, gh CLI, and access to the GitHub repo configured in alex_github_update_config.md.
 metadata:
   author: alex-tradeblocks
-  version: "1.0"
+  version: "1.2"
 ---
 
 # Dev GitHub Update
@@ -18,7 +18,7 @@ Publish dev skills from the local dev folder to the GitHub marketplace plugin re
 
 ## Step 0: Load (or Create) Config
 
-Look for `$TB_ROOT/github_update_config.md`.
+Look for `$TB_ROOT/alex_github_update_config.md`.
 
 ### If config exists
 
@@ -26,7 +26,7 @@ Parse the YAML frontmatter with a real YAML parser — same pattern as startup:
 
 ```python
 import re, yaml, pathlib
-txt = pathlib.Path('github_update_config.md').read_text()
+txt = pathlib.Path('alex_github_update_config.md').read_text()
 fm = re.search(r'^---\n(.*?)\n---', txt, re.DOTALL).group(1)
 config = yaml.safe_load(fm)
 ```
@@ -41,45 +41,49 @@ Detect values by probing, present to user for confirmation, then write the confi
 
 | Key | How to detect |
 |---|---|
-| `repo_path` | Search `~/Developer/` for a directory containing `.claude-plugin/plugin.json`. If multiple or none found, ask the user for the absolute path. |
-| `dev_skills_folder` | Read from `startup_config.md` if it exists (`dev_skills_folder` key), otherwise look for `Dev-*Skills*` in `$TB_ROOT`. |
+| `repo_path` | Search common dev directories (`~/Developer/`, `~/Projects/`, `~/repos/`) for a folder containing `.claude-plugin/plugin.json`. If multiple or none found, ask the user for the absolute path. |
+| `dev_skills_folder` | Read from `alex_tradeblocks_startup_config.md` if it exists (`dev_skills_folder` key), otherwise glob for `Dev-*Skills*` or `*-dev-skills` in `$TB_ROOT`. |
 | `plugin_id` | Read `~/.claude/plugins/installed_plugins.json` — find the plugin whose install path contains the repo name. Format: `{namespace}@{marketplace-name}`. |
+| `plugin_namespace` | Extract from `plugin_id` (the part before `@`). Used to locate the cache directory. |
 | `dev_prefix` | Default `dev-`. Confirm with user. |
-| `published_prefix` | Read the name field of any existing published skill in `{repo_path}/skills/*/SKILL.md` and extract the common prefix. Default `alex-`. Confirm with user. |
-| `support_files_src` | Look for a non-skills, non-hidden directory in `$TB_ROOT` that matches the repo name or contains `.default.csv` files. Ask if ambiguous. |
+| `published_prefix` | Read the name field of any existing published skill in `{repo_path}/skills/*/SKILL.md` and extract the common prefix. Confirm with user. |
+| `support_files_src` | Look for a non-skills, non-hidden directory in `$TB_ROOT` that contains `.default.csv` files. Ask if ambiguous. |
 | `support_files_dest` | Same folder name in the repo. Confirm. |
 | `shared_folder` | Look for `_shared/` in `{dev_skills_folder}`. Default `_shared`. |
 | `plugin_json_path` | `.claude-plugin/plugin.json` (standard location). Verify exists in repo. |
 | `marketplace_json_path` | `.claude-plugin/marketplace.json`. Verify exists in repo. |
 | `skills_dir` | `skills` (standard location). Verify exists in repo. |
-| `exclude_skills` | Ask user if any dev skills should be excluded from publishing (e.g. `dev-tradeblocks-startup` if it's workspace-only). Default empty list. |
+| `exclude_skills` | Ask user if any dev skills should be excluded from publishing. Default empty list. |
 
-Write to `$TB_ROOT/github_update_config.md` using the Config Schema below.
+Write to `$TB_ROOT/alex_github_update_config.md` using the Config Schema below.
 
 ### Config Schema
+
+All values below are **placeholders** — replace with actual paths and names during first-run detection.
 
 ```markdown
 ---
 schema_version: 1
 
 # Repo
-repo_path: /Users/username/Developer/alex-tradeblocks-skills
+repo_path: <absolute-path-to-git-repo>           # e.g. /Users/you/Developer/your-skills-repo
 skills_dir: skills
 plugin_json_path: .claude-plugin/plugin.json
 marketplace_json_path: .claude-plugin/marketplace.json
 
 # Dev workspace
-dev_skills_folder: Dev-TradeBlocks-Skills    # relative to TB root
-shared_folder: _shared                       # relative to dev_skills_folder
+dev_skills_folder: <dev-folder-name>              # relative to TB root
+shared_folder: _shared                            # relative to dev_skills_folder
 
 # Support files (shipped with plugin but not skills)
-support_files_src: Alex-TradeBlocks-Skills   # in TB root
-support_files_dest: Alex-TradeBlocks-Skills  # in repo
+support_files_src: <support-folder-in-tb-root>    # folder containing .default.csv files
+support_files_dest: <support-folder-in-repo>      # usually same name as src
 
 # Naming conventions
-dev_prefix: "dev-"
-published_prefix: "alex-"
-plugin_id: alex-tradeblocks@alex-tradeblocks-skills
+dev_prefix: "dev-"                                # prefix on dev skill folder/names
+published_prefix: "<your-prefix>-"                # prefix on published skill folder/names
+plugin_id: <namespace>@<marketplace-name>         # from installed_plugins.json
+plugin_namespace: <namespace>                     # for cache directory lookup
 
 # Exclusions (dev skills that should NOT be published — empty = publish all)
 exclude_skills: []
@@ -107,9 +111,9 @@ The user edits by hand. The skill detects drift (e.g. repo moved, new exclusions
 For each dev skill in `{dev_skills_folder}/*/SKILL.md` (excluding any in `exclude_skills`):
 
 1. Parse dev SKILL.md frontmatter with `yaml.safe_load` → extract `name`, `metadata.version` (or `version`), full file content.
-2. Derive the **stem** by stripping `{dev_prefix}` from the name (e.g. `dev-entry-filter-pareto` → `entry-filter-pareto`).
+2. Derive the **stem** by stripping `{dev_prefix}` from the name (e.g. `{dev_prefix}my-skill` → `my-skill`).
 3. Look for a matching **cache skill**:
-   - Glob `~/.claude/plugins/cache/*/alex-tradeblocks/*/skills/{published_prefix}{stem}/SKILL.md`
+   - Glob `~/.claude/plugins/cache/*/{plugin_namespace}/*/skills/{published_prefix}{stem}/SKILL.md`
    - If found, parse its frontmatter for version and read its full content.
 4. Look for a matching **repo skill**:
    - Check `{repo_path}/{skills_dir}/{published_prefix}{stem}/SKILL.md`
@@ -131,13 +135,10 @@ For each dev skill in `{dev_skills_folder}/*/SKILL.md` (excluding any in `exclud
 ```
 Version & Content Audit:
   Skill                             Dev Ver   Cache Ver  Changed?  Status
-  dev-entry-filter-pareto           3.0-dev   1.0        yes       READY (dev ahead)
-  dev-threshold-analysis            3.0-dev   1.0        yes       READY (dev ahead)
-  dev-entry-filter-heatmap          2.0-dev   --         --        NEW
-  dev-create-datelist               1.0-dev   --         --        NEW
+  {dev_prefix}skill-a               3.0-dev   1.0        yes       READY (dev ahead)
+  {dev_prefix}skill-b               3.0-dev   1.0        yes       READY (dev ahead)
+  {dev_prefix}skill-c               2.0-dev   --         --        NEW
   ...
-  dev-tradeblocks-startup           3.0-dev   --         --        EXCLUDED
-  dev-github-update                 1.0-dev   --         --        EXCLUDED
 
   Summary: N ready · M new · J skipped (no change) · K excluded
 ```
@@ -157,25 +158,36 @@ For each skill with status READY or NEW:
 1. Create `{repo_path}/{skills_dir}/{published_prefix}{stem}/` if it doesn't exist.
 2. Copy all files from `{dev_skills_folder}/{dev_prefix}{stem}/` to the repo skill folder.
 3. **Transform the copied SKILL.md** (in the repo, NOT the dev original):
-   - `name:` field — replace `{dev_prefix}` with `{published_prefix}` (e.g. `dev-entry-filter-pareto` → `alex-entry-filter-pareto`)
+   - `name:` field — replace `{dev_prefix}` with `{published_prefix}`
    - `description:` field — strip leading `[DEV] ` if present
    - `version:` field — strip trailing `-dev` (e.g. `3.0-dev` → `3.0`)
    - Leave all other fields and body content unchanged.
 
-### 2B. Sync support files
+### 2B. Clean up stale folders
+
+Check for any folders in `{repo_path}/{skills_dir}/` that use the `{dev_prefix}` naming (e.g. `dev-my-skill` instead of `{published_prefix}my-skill`). These are leftovers from prior manual copies and should be removed:
+
+1. Glob `{repo_path}/{skills_dir}/{dev_prefix}*/`
+2. For each match, check if a properly-named `{published_prefix}` counterpart exists.
+3. If counterpart exists: delete the stale `{dev_prefix}` folder (it's been superseded).
+4. If no counterpart: flag it and ask the user whether to rename or delete.
+
+Also remove any stale entries from `marketplace.json` that reference `{dev_prefix}` paths.
+
+### 2C. Sync support files
 
 Copy contents of `$TB_ROOT/{support_files_src}/` → `{repo_path}/{support_files_dest}/`, overwriting existing files. Also copy `{dev_skills_folder}/{shared_folder}/` contents into `{repo_path}/{support_files_dest}/` (shared CSVs, SQL templates, etc. that ship with the plugin).
 
-### 2C. Update marketplace.json
+### 2D. Update marketplace.json
 
 Read `{repo_path}/{marketplace_json_path}`. For each NEW skill, add its path to the `plugins[0].skills` array:
 ```json
-"./skills/alex-new-skill-name"
+"./{skills_dir}/{published_prefix}{stem}"
 ```
 
 Do not duplicate existing entries. Sort the array alphabetically for consistency.
 
-### 2D. Bump plugin version
+### 2E. Bump plugin version
 
 Read current version from `{repo_path}/{plugin_json_path}`. Ask user: *"Current plugin version is X.Y.Z. Bump type? (patch / minor / major)"*
 
@@ -191,8 +203,8 @@ Apply the bump to **both** `plugin.json` (`version` field) and `marketplace.json
    ```
    Update skills to vX.Y.Z
 
-   Updated: skill-a (1.0 → 3.0), skill-b (1.0 → 3.0)
-   Added: skill-c (2.0), skill-d (1.0)
+   Updated: {published_prefix}skill-a (1.0 → 3.0)
+   Added: {published_prefix}skill-b (2.0)
    Support files synced.
    ```
 4. Confirm with user: *"Commit and push to origin/main?"*
@@ -207,9 +219,15 @@ Apply the bump to **both** `plugin.json` (`version` field) and `marketplace.json
 
 After push succeeds:
 
-1. Run: `claude plugins update {plugin_id}`
-2. Report the result (new version, skills loaded).
-3. Prompt: *"Re-open Claude Code to pick up the refreshed skill cache. New skills won't be available until restart."*
+1. Try: `claude plugins update {plugin_id}`
+2. Check the output. If it reports "already at the latest version" despite the push (known issue — the cache update may not detect the new version immediately):
+   - Run: `claude plugins uninstall {plugin_id}` then `claude plugins install {plugin_id}`
+   - This forces a fresh pull from GitHub.
+3. Report the current cache version vs the pushed plugin version:
+   ```
+   Cache: current X.Y.Z (sha abc1234) → will update to X.Y.Z (sha def5678) on restart
+   ```
+4. Prompt: *"Re-open Claude Code to pick up the refreshed skill cache. New skills won't be available until restart."*
 
 ---
 
@@ -221,21 +239,21 @@ After push succeeds:
 GitHub Update — YYYY-MM-DD HH:MM
 
 Plugin version: X.Y.Z → X.Y.Z
-  Updated: alex-entry-filter-pareto (1.0 → 3.0), alex-threshold-analysis (1.0 → 3.0)
-  Added:   alex-entry-filter-heatmap (2.0), alex-create-datelist (1.0)
-  Skipped: 3 (no changes), 2 (excluded)
+  Updated: {published_prefix}skill-a (1.0 → 3.0)
+  Added:   {published_prefix}skill-b (2.0), {published_prefix}skill-c (1.0)
+  Skipped: N (no changes), M (excluded)
 Pushed: main @ abc1234
-Cache: updated — restart Claude to load
+Cache: X.Y.Z → will update to X.Y.Z on restart
 ```
 
-**Append to `$TB_ROOT/github_update_log.md`:**
+**Append to `$TB_ROOT/alex_github_update_log.md`:**
 
 ```markdown
 ## YYYY-MM-DD HH:MM
-- Plugin version: 1.2.0 → 1.3.0
-- Updated: alex-entry-filter-pareto (1.0 → 3.0), alex-threshold-analysis (1.0 → 3.0)
-- Added: alex-entry-filter-heatmap (2.0)
-- Skipped: 3 unchanged, 2 excluded
+- Plugin version: X.Y.Z → X.Y.Z
+- Updated: {published_prefix}skill-a (1.0 → 3.0)
+- Added: {published_prefix}skill-b (2.0)
+- Skipped: N unchanged, M excluded
 - Pushed: main @ abc1234
 ```
 
@@ -247,7 +265,8 @@ Create the log file if it doesn't exist. Append-only — never truncate.
 
 - Do not modify dev SKILL.md files except for version bumps the user explicitly approves.
 - Do not push without explicit user confirmation.
-- Do not overwrite `github_update_config.md` after first creation.
+- Do not overwrite `alex_github_update_config.md` after first creation.
 - Do not publish skills listed in `exclude_skills`.
 - Do not modify the skill body content during sync — only transform frontmatter fields (name, description prefix, version suffix).
-- Do not delete files in the repo that aren't in the dev folder. The repo may have files (README, LICENSE, .gitignore) that don't exist in dev.
+- Do not delete files in the repo that aren't in the dev folder (README, LICENSE, .gitignore, etc.).
+- Do not hardcode user-specific values (paths, repo names, prefixes) in this skill file. All user-specific values come from the config.
