@@ -3,17 +3,17 @@ name: alex-create-datelist
 description: 'Generate a filtered datelist from entry filter data for use in Option Omega. User specifies a field + threshold or custom criteria. Output is an OO-compatible ISO datelist with descriptive label, ready to copy-paste. Reads from shared entry_filter_data.csv when available. Usage as whitelist or blackout is contextual — the label provides the necessary info.
 
   '
-compatibility: Requires TradeBlocks MCP server with trade data loaded.
+compatibility: Reads `entry_filter_data.csv` directly — no MCP calls from this skill. Requires that upstream `dev-entry-filter-build-data` has already produced the CSV (which itself needs the TradeBlocks MCP server). Pure Python, standard library only.
 metadata:
   author: alex-tradeblocks
-  version: 1.5.0
+  version: 1.8.1
 ---
 
 # Create Datelist
 
 Generate a copy-paste-ready datelist of trade dates that meet a specified filter condition. Output format matches Option Omega's ISO CSV import format. Whether the list is used as a whitelist or blackout is contextual — the descriptive label provides the necessary info.
 
-**Shared data with Pareto, Parallel Coords, and Threshold Analysis skills.** When the shared `entry_filter_data.csv` exists, dates are filtered directly from it — no SQL needed for any field in the CSV. If the CSV doesn't exist, the skill builds it via the shared Phase 1 pipeline or falls back to direct SQL for fields not in the CSV schema.
+**Reads the shared `entry_filter_data.csv`** produced by `alex-entry-filter-build-data`. This skill applies filters in Python over the CSV — no SQL, no MCP, no network. If the CSV is missing or stale, surface the error and point the user at `/alex-entry-filter-build-data` to produce a fresh one; do not attempt to build data from inside this skill.
 
 ## Output Format
 
@@ -99,27 +99,17 @@ Parse each condition independently, apply all as AND (intersection).
 
 ## File Dependencies
 
-### entry_filter_groups CSV
+| File | Role | Produced by |
+|---|---|---|
+| `{block}/alex-tradeblocks-ref/entry_filter_data.csv` | Trade-level data — one row per trade with `date_opened`, `rom_pct`, and every filter column. This skill's only data input. | `alex-entry-filter-build-data` |
+| `{block}/alex-tradeblocks-ref/entry_filter_groups.*.csv` (optional) | Used only when the user supplies filter expressions by Short Name instead of CSV Column — the skill looks up the matching `CSV Column` here. Block-local preferred; falls back to `_shared/entry_filter_groups.default.csv` if the block copy isn't present. | `alex-entry-filter-build-data` / shared default |
 
-Same resolution order as other skills:
-1. User specifies a file at invocation
-2. `_shared/entry_filter_groups.csv` (no `.default`)
-3. `_shared/entry_filter_groups.default.csv`
-
-### Shared Phase 1 SQL (used only when building CSV from scratch)
-
-- `_shared/phase1_sufficiency_checks.default.sql`
-- `_shared/phase1_entry_filter_data.default.sql`
-
-### entry_filter_data.csv (Phase 1 output)
-
-One row per trade, columns: `date_opened`, `pl_per_contract`, `margin_per_contract`, `rom_pct`, plus all filter columns. Shared across all entry filter skills.
+The skill does NOT read SQL templates, market data, or any other shared file. If `entry_filter_data.csv` is missing, it fails fast and defers to `alex-entry-filter-build-data`.
 
 ## Prerequisites
 
-- TradeBlocks MCP server running
-- At least one block with trade data loaded
-- `entry_filter_data.csv` should exist (run any entry filter skill first to build it)
+- `entry_filter_data.csv` exists in the target block's `alex-tradeblocks-ref/` folder. If missing, run `/alex-entry-filter-build-data BLOCK_ID` to produce it (that skill is what needs MCP + DuckDB; this one does not).
+- Python 3 standard library (no extra packages).
 
 ## Process
 
@@ -138,23 +128,10 @@ One row per trade, columns: `date_opened`, `pl_per_contract`, `margin_per_contra
 
 ### Step 3: Load Data
 
-**CSV-first (preferred):**
-
 1. Check if `{block_folder}/alex-tradeblocks-ref/entry_filter_data.csv` exists.
-2. **If it exists:** Read it. Verify the required field column(s) exist. Report: "Using cached filter data ({n} trades)."
-3. **If CSV does not exist and all fields are in the CSV schema:** Build it via shared Phase 1:
-   - Run sufficiency checks from `phase1_sufficiency_checks.default.sql`
-   - Run the data CTE from `phase1_entry_filter_data.default.sql`
-   - Write results to `{block_folder}/alex-tradeblocks-ref/entry_filter_data.csv`
-
-**SQL fallback (fields not in CSV):**
-
-For fields only available via direct SQL (duration, movement, raw gap points), query trades directly:
-```sql
-SELECT date_opened, {field_expression} as field_val
-FROM trades.trade_data
-WHERE block_id = '{blockId}'
-```
+2. **If it exists:** read it. Verify every filter's CSV column is present in the header. Report: "Using filter data ({n} trades, coverage {date_min} → {date_max})."
+3. **If it does NOT exist:** stop and surface: *"entry_filter_data.csv is missing for BLOCK_ID. Run `/alex-entry-filter-build-data BLOCK_ID` to produce it, then re-invoke this skill."* Do not attempt to build data from within this skill.
+4. **If a requested filter's column is not in the CSV header:** stop and report the missing column. The user needs to add it to the groups CSV and re-run build-data. This skill never falls back to SQL.
 
 ### Step 4: Compute Both Datelists
 
@@ -190,19 +167,24 @@ The `{filter_expression}` values are verbatim as the user wrote them (e.g., `VIX
 
 **The output must always appear in this exact order (no exceptions):**
 
-1. Skill version line: `alex-create-datelist v{version} · gen {data_max_YYYYMMDD} (last date_opened in entry_filter_data.csv)`
-2. Summary table (baseline row + per-filter rows + AND-intersection row, columns as specified below)
-3. Code Block 1 — **Specific Dates** (whitelist, single label + single dates line, label ends with `gen YYYYMMDD.`)
-4. Code Block 2 — **Blackout Dates** (one label + dates line per filter, blank line between filters, each label ends with `gen YYYYMMDD.`)
+1. **Skill version line** — `alex-create-datelist v{version} · gen {data_max_YYYYMMDD} (last date_opened in entry_filter_data.csv)`. Self-identifies the output if pasted elsewhere.
+2. **Table 1 — Baseline Impact** (each filter vs the full sample)
+3. **Table 2 — Marginal Impact** (each filter's contribution to the AND set)
+4. **Code block — Specific Dates** (whitelist; single label + single dates line)
+5. **Code block — Blackout Dates** (one label + dates line per filter, blank line between filters)
 
-**Block 1 — Specific Dates (whitelist):**
+The two tables are the shared canonical layout defined below under **Canonical Tables**. The two code blocks use the label format defined in Step 5. Each section below specifies exactly one of these five outputs; nothing is implied or optional.
+
+---
+
+**Detail — Code block: Specific Dates (whitelist).** Exactly one label line + one dates line, no blank line between them:
 
 ```
 specific dates: {f1} + {f2} + ... gen YYYYMMDD.
 ,{date1}, ,{date2}, ...
 ```
 
-**Block 2 — Blackout Dates (one row per filter).** Label immediately followed by its dates line (no blank between them). A single blank line separates one filter from the next:
+**Detail — Code block: Blackout Dates (per filter).** One label + dates line per filter. Label immediately followed by its dates line (no blank between them). A single blank line separates one filter from the next:
 
 ```
 blackout dates: {f1} gen YYYYMMDD.
@@ -217,44 +199,132 @@ blackout dates: {f3} gen YYYYMMDD.
 
 Dates may repeat across blackout rows — that's expected (each filter blacks out independently).
 
-**Report a summary table immediately BEFORE the code blocks.** Format and order are fixed:
+---
 
-**Line immediately above the table** — skill version marker (so copied output self-identifies):
+## Canonical Tables (shared with alex-entry-filter-analysis)
 
-```
-alex-create-datelist v{version_from_frontmatter} · gen {data_max_YYYYMMDD} (last date_opened in entry_filter_data.csv)
-```
+Both tables precede the code blocks in the fixed order. Both use the same compressed column set so a reader scans them the same way. The spec here is the shared source of truth for `alex-entry-filter-analysis` as well — update both skills together if this section changes.
 
-**Columns — in this exact order:**
+**Columns — compressed labels, fixed order. Baseline Impact has 10 columns; Marginal Impact has 11 (adds `N-1` at position 2, shifting everything after it by 1).**
 
-| # | Column | Contents | Formatting |
+| # (Baseline) | # (Marginal) | Column label | Contents | Formatting |
+|---:|---:|---|---|---|
+| 1 | 1 | `Filter` | Filter expression verbatim (or the baseline/AND label relevant to the table) | First and last rows **bold** |
+| — | 2 | `N-1` | **Marginal only.** Size of the pool the filter operates on — all trades passing the OTHER N−1 filters | Integer; anchor row = `—` |
+| 2 | 3 | `Keep` | Count of trades passing the filter (or in the AND set, for Marginal Impact) | Integer, right-aligned |
+| 3 | 4 | `Out` | Count of trades non-null on the filter but excluded by it | Integer, right-aligned |
+| 4 | 5 | `%` | Baseline: `Keep / Total × 100`; Marginal: `Keep / N-1 × 100` | `XX.X%`, right-aligned |
+| 5 | 6 | `Net ROR` | Net ROR of the row's subset as % of baseline Net ROR | `XX.X%`, right-aligned |
+| 6 | 7 | `+pts` | Delta of `Net ROR` vs the table's anchor row, in pp | `+X.X pp` / `-X.X pp`; anchor row = `—` |
+| 7 | 8 | `Avg ROR` | Mean `rom_pct` across the row's subset | `XX.XX%`, right-aligned |
+| 8 | 9 | `+pts` | Delta of `Avg ROR` vs the table's anchor row, in pp | `+X.XX pp` / `-X.XX pp`; anchor row = `—` |
+| 9 | 10 | `WR` | Win rate of the row's subset | `XX.X%`, right-aligned |
+| 10 | 11 | `+pts` | Delta of `WR` vs the table's anchor row, in pp | `+X.XX pp` / `-X.XX pp`; anchor row = `—` |
+
+The three `+pts` columns are deliberately unqualified in their headers — column order pairs each `+pts` with the metric immediately to its left (Net ROR / Avg ROR / WR). This keeps each table narrow enough to scan at a glance.
+
+**Per-table anchor (what "anchor row" means):**
+
+| Table | Anchor row label | Anchor row values | +pts = ? |
 |---|---|---|---|
-| 1 | `Filter` | Filter expression verbatim (or `All Trades (baseline)` / `All AND (specific dates)`) | First and last rows **bold** |
-| 2 | `Keep` | Count of trades passing the filter | Integer, right-aligned |
-| 3 | `Blackout` | Count of trades where the filter was non-null and failed | Integer, right-aligned |
-| 4 | `Net ROR` | Sum of `rom_pct` over the keep subset, as % of baseline Net ROR (baseline = 100.0%) | `XX.X%`, right-aligned |
-| 5 | `Avg ROR` | Mean `rom_pct` across keep | `XX.XX%`, right-aligned |
-| 6 | `Avg ROR +pts` | `Avg ROR(row) − Avg ROR(baseline)` | `+X.XX pp` / `-X.XX pp`; baseline row = `—` |
-| 7 | `WR` | Win rate of keep | `XX.X%`, right-aligned |
-| 8 | `WR +pts` | `WR(row) − WR(baseline)` | `+X.XX pp` / `-X.XX pp`; baseline row = `—` |
+| Baseline Impact | `All Trades (baseline)` | Keep=total, Out=0, %=100.0%, Net ROR=100.0%, Avg ROR=baseline avg, WR=baseline WR | `(filter row value) − (baseline value)` in absolute pp |
+| Marginal Impact | `All N filters (AND set)` | N-1=`—`, Keep=N∩, Out=total−N∩, %=N∩/total, Net ROR=full AND Net %, Avg ROR=full AND avg, WR=full AND WR | `(full AND value) − (N-1 value)` in absolute pp |
 
-**Row order — fixed:**
+All three `+pts` columns in both tables are **absolute pp deltas** — no ratios, no mixed framings. The only difference between tables is which row the delta is measured against.
 
-1. **`All Trades (baseline)`** — the anchor row. Keep = total trades, Blackout = 0, Net ROR = 100.0%, both `+pts` columns = `—`.
+**Why both `%` and `Net ROR` (plus their bumps):** a filter's quality can't be read from one number alone. `%` shows how selective the filter is (share of sample kept). `Net ROR` shows how much of the baseline's total edge survives — crucial for detecting filters that keep many trades but drop net edge, or filters that trim few trades but preserve nearly all edge. Pairing each metric with its `+pts` bump makes deltas unmistakable; a "free" filter in the Baseline Impact table has `Net ROR +pts > 0` AND `Avg ROR +pts > 0` simultaneously.
+
+---
+
+### Table 1 — Baseline Impact
+
+**Anchor row:** `All Trades (baseline)`. All `+pts` deltas in this table are measured vs baseline.
+
+**Row order (fixed):**
+
+1. **`All Trades (baseline)`** — Keep = total, Out = 0, % = 100.0%, Net ROR = 100.0%, Avg ROR = baseline avg, WR = baseline WR, all `+pts` = `—`.
 2. One row per user-supplied filter, in the order the user listed them.
 3. **`All AND (specific dates)`** — the intersection row matching the Specific Dates code block.
 
 Template (values are placeholders):
 
-| Filter | Keep | Blackout | Net ROR | Avg ROR | Avg ROR +pts | WR | WR +pts |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| **All Trades (baseline)** | Nₜ | 0 | 100.0% | B.BB% | — | W.W% | — |
-| {f1} | N₁ | K₁ | R₁% | A₁% | ±ΔA₁ pp | W₁% | ±ΔW₁ pp |
-| {f2} | N₂ | K₂ | R₂% | A₂% | ±ΔA₂ pp | W₂% | ±ΔW₂ pp |
-| … | … | … | … | … | … | … | … |
-| **All AND (specific dates)** | N∩ | B∪ | R∩% | A∩% | ±ΔA∩ pp | W∩% | ±ΔW∩ pp |
+```
+Baseline Impact
 
-The first row anchors the comparison so every other row is read as "what this filter does relative to doing nothing." Individual rows describe each filter's keep effect in isolation. The last row describes the specific-dates whitelist (what actually runs).
+| Filter | Keep | Out | % | Net ROR | +pts | Avg ROR | +pts | WR | +pts |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **All Trades (baseline)** | Nₜ | 0 | 100.0% | 100.0% | — | B.BB% | — | W.W% | — |
+| {f1} | N₁ | K₁ | T₁% | R₁% | ±ΔR₁ | A₁% | ±ΔA₁ | W₁% | ±ΔW₁ |
+| … | … | … | … | … | … | … | … | … | … |
+| **All AND (specific dates)** | N∩ | B∪ | T∩% | R∩% | ±ΔR∩ | A∩% | ±ΔA∩ | W∩% | ±ΔW∩ |
+```
+
+Every filter row reads as "what this filter does relative to doing nothing." The AND row describes the specific-dates whitelist (what actually runs).
+
+---
+
+### Table 2 — Marginal Impact
+
+**Anchor row:** `All N filters (AND set)` — same intersection as the last row of Baseline Impact, shown with absolute/baseline-relative values for reference.
+
+**Filter rows:** each one is labelled `Marginal: {filter expression}`. The `Marginal:` prefix is mandatory — it distinguishes the row from the Baseline Impact table's same-named filter row and signals "this is the filter's contribution to the AND set, NOT the result of dropping it." Each row shows **what that filter does when applied to the subset that already passes the OTHER (N-1) filters** — i.e. its *marginal contribution* to the final AND set.
+
+**Row order (fixed):**
+
+1. **`All N filters (AND set)`** — anchor. Columns show absolute numbers:
+   - Keep = N∩, Out = total − N∩, % = N∩ / total × 100
+   - Net ROR = N∩'s sum-of-ROM as % of baseline Net ROR
+   - Avg ROR = N∩'s mean ROM, WR = N∩'s win rate
+   - All three `+pts` columns = `—`
+2. One row per filter, in the user-supplied order.
+
+**Marginal Impact uses 11 columns** (one more than Baseline Impact): the extra `N-1` column sits immediately after `Filter` and makes the row's arithmetic self-verifying (`N-1 = Keep + Out`).
+
+**Column semantics for filter rows — ALL main columns show the landing (full AND) value, ALL +pts columns show the absolute pp delta vs the N-1 pool.** This makes every row read the same way: "the N-1 pool had X; adding this filter took us to the landing value Y; the delta Y−X is in the +pts column."
+
+For each filter X, let `S_{N-1}` be the subset of trades that pass the OTHER N−1 filters, and `S_N` = full AND set.
+
+| Column | Filter-row value | What it means |
+|---|---|---|
+| `N-1` | `|S_{N-1}|` | Size of the pool available to X — the subset of trades that pass every filter EXCEPT X. Exactly equals `Keep + Out`. |
+| `Keep` | `|S_N|` (constant across filter rows = N∩) | Landing trade count after X is applied to the N-1 pool. |
+| `Out` | `|S_{N-1}| − |S_N|` | How many trades X **additionally excludes** from the N-1 pool. Zero means X removes nothing the other filters didn't already catch (redundant). |
+| `%` | `|S_N| / |S_{N-1}| × 100` | X's passthrough rate on the N-1 pool. 100% = redundant; lower = more selective. |
+| `Net ROR` | `Net_ROR(S_N) / baseline_Net_ROR × 100` (constant across filter rows = full AND's retention of baseline) | Landing Net ROR as % of baseline. |
+| `Net ROR +pts` | `(Net ROR of S_N, as % of baseline) − (Net ROR of S_{N-1}, as % of baseline)` | Absolute pp change in baseline-retention when X is added to the N-1 pool. Negative = X costs retention; positive = X *improves* retention (rare; signals "free" filter). |
+| `Avg ROR` | `Avg_ROR(S_N)` (constant = full AND's avg) | Landing per-trade mean ROM. |
+| `Avg ROR +pts` | `Avg_ROR(S_N) − Avg_ROR(S_{N-1})` | Absolute pp lift in per-trade edge from adding X. |
+| `WR` | `WR(S_N)` (constant = full AND's WR) | Landing win rate. |
+| `WR +pts` | `WR(S_N) − WR(S_{N-1})` | Absolute pp lift in WR from adding X. |
+
+**Design pattern:** `Keep`, `Net ROR`, `Avg ROR`, and `WR` are all constant across Marginal filter rows — they're the landing values every row ends at (the full AND). The informative columns that *vary* per filter are `N-1` (size of the pool the filter operates on), `Out` (marginal exclusions), `%` (passthrough rate), and all three `+pts` columns (pre→post deltas). This makes all three `+pts` columns mean the same thing — an absolute pp delta between the N-1 pool's value and the landing value — so they can be read with a single mental model.
+
+For the **anchor row** (All N filters AND set), `N-1` is `—` because the anchor doesn't exclude any filter — it's the full intersection. `Keep`, `Net ROR`, `Avg ROR`, `WR` show the same landing values as the filter rows; all three `+pts` columns show `—` because the anchor has no "before" state.
+
+**Arithmetic check:** every filter row satisfies `N-1 = Keep + Out`. If a reader sees a mismatch, something went wrong in the computation.
+
+**Sign-convention reading:**
+
+- **`Out = 0` and all `+pts = 0`** → X is fully redundant inside this AND set (every trade X would exclude was already excluded by the other filters). Worth keeping in the blackout slot as a safety net against filter-set changes, but doing no incremental work here.
+- **`Net ROR +pts > 0`** → X actually *improves* Net ROR retention from the N-1 pool (rare but powerful — X removes net-negative trades the other filters missed).
+- **`Avg ROR +pts > 0`** → X concentrates per-trade edge (typical for a working filter).
+
+Template:
+
+```
+Marginal Impact — each row shows the filter's effect on the subset that already passes the OTHER filters.
+
+| Filter | N-1 | Keep | Out | % | Net ROR | +pts | Avg ROR | +pts | WR | +pts |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **All N filters (AND set)** | — | N∩ | T−N∩ | T∩% | R∩% | — | A∩% | — | W∩% | — |
+| Marginal: {f1} | P₁ | N∩ | O₁ | Q₁% | M₁% | ±ΔM₁ | A∩% | ±ΔA₁ | W∩% | ±ΔW₁ |
+| Marginal: {f2} | P₂ | N∩ | O₂ | Q₂% | M₂% | ±ΔM₂ | A∩% | ±ΔA₂ | W∩% | ±ΔW₂ |
+| … | … | … | … | … | … | … | … | … | … | … |
+```
+
+Notice `Keep`, `Net ROR`, `Avg ROR`, and `WR` are ALL constant across filter rows — they're the landing values every filter row ends at (the full AND set). The informative columns that *vary* per filter are `N-1` (the pool size), `Out` (marginal excludes), `%` (passthrough rate), and all three `+pts` columns (each reporting the absolute pp delta between the N-1 pool's value and the landing value). `N-1 = Keep + Out` is the arithmetic consistency check.
+
+**How to read the two tables together:** Baseline Impact answers "what does each filter do on its own?" Marginal Impact answers "what does each filter contribute to the set we're actually shipping?" A filter can look weak in Baseline Impact but be critical in Marginal Impact (its contribution only visible in combination), and vice versa. Both views are needed before accepting a shortlist.
 
 ### Step 7: Offer Inverse
 
@@ -281,8 +351,10 @@ Offer: "Want the inverse of any individual filter (swap blackout ↔ keep)?"
 
 ## Related Skills
 
-- `alex-entry-filter-threshold-analysis` — Find optimal threshold before generating datelist
-- `alex-entry-filter-heatmap` — Click-to-capture builds the filter expressions this skill consumes
+- `alex-entry-filter-analysis` — one-shot orchestrator that runs the full pipeline and typically invokes this skill as its final step (Step 9 of that skill's Process). Use it when you want the recommended filter list built for you; come here directly when you already know the filters you want.
+- `alex-entry-filter-threshold-analysis` — single-filter deep dive. Use to find a good threshold for one filter before adding it to a datelist.
+- `alex-entry-filter-heatmap` — click-to-capture selections panel produces the exact filter expressions this skill consumes (copy from heatmap → paste here).
+- `alex-entry-filter-build-data` — upstream. Produces the `entry_filter_data.csv` this skill reads. Required before this skill can run.
 
 ## Notes
 

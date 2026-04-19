@@ -6,7 +6,7 @@ description: 'Threshold analysis for a single entry filter on a block. Sweeps th
 compatibility: Requires Python 3 with numpy. No MCP. No DuckDB. No network.
 metadata:
   author: alex-tradeblocks
-  version: 4.0.0
+  version: 4.0.1
 ---
 
 # Entry Filter Threshold Analysis

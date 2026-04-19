@@ -6,7 +6,7 @@ description: 'Build the shared entry_filter_data.csv for a block. Reads the filt
 compatibility: Requires TradeBlocks MCP server with trade data and market data loaded. Python 3 with pandas and duckdb.
 metadata:
   author: alex-tradeblocks
-  version: 1.0.0
+  version: 1.0.1
 ---
 
 # Build Entry Filter Data CSV
@@ -122,7 +122,7 @@ Example: see the format used in the user-approved screenshot that established th
 
 **Operational notes** (context for decisions, not part of the response):
 - If missing data caused the skips, offer `/tradeblocks:market-data` as the next step.
-- Intraday-only filters (marked "intraday source not supported" in the script output) need `dev-entry-filter-time` instead.
+- Intraday-only filters (marked "intraday source not supported" in the script output) are out of scope for this skill — they require intraday-premium-curve data that this skill doesn't produce. Handle them via a dedicated intraday-aware pipeline outside this skill.
 - The `[block-local]` vs `[shared]` vs `[explicit]` tag is the single most important visual cue — never omit it.
 
 ### Step 4 — Let downstream skills reuse the output

@@ -6,7 +6,7 @@ description: 'Pre-computes sweep results for every continuous AND categorical en
 compatibility: Python 3 standard library only. No MCP, no DuckDB, no numpy.
 metadata:
   author: alex-tradeblocks
-  version: 1.2.0
+  version: 1.2.1
 ---
 
 # Entry Filter Threshold Sweep

@@ -1,6 +1,6 @@
 {
   "name": "alex-tradeblocks-skills",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "description": "Custom agent skills for TradeBlocks \u2014 Option Omega backtest analysis",
   "dependencies": {}

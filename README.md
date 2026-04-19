@@ -23,7 +23,7 @@ Skills follow the `dev-<name>/` convention while in development; on publish, `al
 
 ## What's in this plugin
 
-9 skills organized into three groups:
+10 skills organized into three groups:
 
 ### Startup & tooling
 
@@ -41,6 +41,7 @@ Skills follow the `dev-<name>/` convention while in development; on publish, `al
 | `alex-entry-filter-enrich-market-holiday` | Add Days_to_Holiday / Weeks_to_Holiday / Days_from_Holiday / Weeks_from_Holiday columns to `entry_filter_data.csv`. |
 | `alex-entry-filter-threshold-sweep` | Pre-compute retention sweep results for every continuous AND categorical/binary entry filter. Writes two sibling CSVs (`entry_filter_threshold_results.csv` + `entry_filter_categorical_results.csv`) that downstream reports consume without recomputing. |
 | `alex-entry-filter-heatmap` | Three-section retention heatmap: Discovery Map (global, 80r%-sorted), By Filter Group (per-Entry-Group Min/Max/Combo), Binary & Categorical Breakdown (clickable In/Out). Every cell click-captures a filter expression into a floating selections panel; Copy-to-clipboard feeds `alex-create-datelist`. |
+| `alex-entry-filter-analysis` | One-shot orchestrator + analyst + learner. Runs the full entry-filter pipeline (build-data → threshold-sweep → heatmap → threshold-analysis for flagged filters), reads the result CSVs + correlations + a scoped preferences file, and produces a baseline-anchored filter shortlist (≤2 per Entry Group) with Baseline Impact + Marginal Impact tables ready to feed to `alex-create-datelist`. Captures user feedback into cross-session learnings scoped by Global / Block / Strategy-Type / Date-Range. |
 
 ### Threshold exploration
 
