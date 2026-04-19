@@ -7,9 +7,8 @@ Reference data and SQL templates shared across multiple dev skills. These files 
 ## Folder Organization
 
 ```
-Dev-TradeBlocks-Skills/
-  _shared/
-    README.md                                  This file
+_shared/
+  README.md                                    This file
     entry_filter_groups.default.csv            Entry filter taxonomy and metadata
     entry_filter_correlations.default.csv      Pairwise correlation matrix for market fields
     entry_filter_holidays.default.csv          US options market holidays (2021-2026)
@@ -31,7 +30,7 @@ _shared/ (dev)  →  repo/_shared/ (GitHub)  →  plugin cache  →  block folde
 ```
 
 1. **Dev:** you edit files here in `_shared/`
-2. **Publish:** `dev-github-update` copies `_shared/` contents to `repo/_shared/` during Step 2C
+2. **Publish:** `alex-github-update` copies `_shared/` contents to `repo/_shared/` during Step 2C
 3. **Cache:** users get the files when they install/update the plugin
 4. **Block:** on first skill run in a block, if the file doesn't already exist locally, it's copied from the cache
 
@@ -52,9 +51,9 @@ Each skill that generates a report has its own `.py` module **inside its skill f
 
 | Module | Skill Folder | Purpose |
 |--------|-------------|---------|
-| `build_pareto_report.py` | `dev-entry-filter-pareto/` | Pareto chart generator |
-| `gen_heatmap.py` | `dev-entry-filter-heatmap/` | Heatmap generator |
-| `build_parallel_coords.py` | `dev-entry-filter-parallel-coords/` | Parallel coords chart |
+| `build_pareto_report.py` | `alex-entry-filter-pareto/` | Pareto chart generator |
+| `gen_heatmap.py` | `alex-entry-filter-heatmap/` | Heatmap generator |
+| `build_parallel_coords.py` | `alex-entry-filter-parallel-coords/` | Parallel coords chart |
 | `gen_threshold_analysis.py` | `dev-threshold-analysis/` | Threshold sweep chart |
 
 These modules use `sys.path.insert` to reference `_shared/` for CSV/SQL imports. They are NOT stored in `_shared/` — they travel with their skill and are copied to the cache alongside the skill's `SKILL.md`.
@@ -165,7 +164,7 @@ These modules use `sys.path.insert` to reference `_shared/` for CSV/SQL imports.
 
 ### `entry_filter_holidays.default.csv`
 
-**Purpose:** Reference table of US options market holidays for computing trade proximity to holidays. Used by the `dev-entry-filter-enrich-market-holiday` skill to add Days_to_Holiday, Weeks_to_Holiday, Days_from_Holiday, and Weeks_from_Holiday columns to `entry_filter_data.csv`.
+**Purpose:** Reference table of US options market holidays for computing trade proximity to holidays. Used by the `alex-entry-filter-enrich-market-holiday` skill to add Days_to_Holiday, Weeks_to_Holiday, Days_from_Holiday, and Weeks_from_Holiday columns to `entry_filter_data.csv`.
 
 **Columns:**
 
@@ -200,5 +199,5 @@ These modules use `sys.path.insert` to reference `_shared/` for CSV/SQL imports.
 | 1.0 | 2026-04-12 | Initial release: entry_filter_groups.default.csv (38 filters, 8 groups) and entry_filter_correlations.default.csv (73 pairs) |
 | 1.1 | 2026-04-14 | Added entry_filter_holidays.default.csv (71 US options market holidays, 2021-2026) |
 | 1.2 | 2026-04-14 | Expanded entry_filter_groups to 59 filters (was 38). Restored Entry Groups B/F/G. Added SMA 5/10/20/50/200 (daily), EMA 5/13/21/50 (min), 4 holiday proximity columns (continuous). Fixed phase1 SQL VIX_Gap_Pct reference. Added {ticker} placeholder to phase1 SQL. |
-| 1.3 | 2026-04-16 | Migrated from Alex-TradeBlocks-Skills/ to Dev-TradeBlocks-Skills/_shared/. Removed stale .py duplicates (now skill-local). Added SQL template documentation. |
-| 1.4 | 2026-04-16 | Repo-side rename: `Alex-TradeBlocks-Skills/` → `_shared/` so the repo mirrors the dev folder. `dev-github-update` bumped to 1.5-dev to handle the rename + stale-destination cleanup. |
+| 1.3 | 2026-04-16 | Migrated shared files into the dev workspace's `_shared/` folder (previously a separate sibling). Removed stale .py duplicates (now skill-local). Added SQL template documentation. |
+| 1.4 | 2026-04-16 | Repo-side rename: `Alex-TradeBlocks-Skills/` → `_shared/` so the repo mirrors the dev folder. `alex-github-update` bumped to 1.5-dev to handle the rename + stale-destination cleanup. |

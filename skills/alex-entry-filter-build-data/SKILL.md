@@ -1,12 +1,10 @@
 ---
 name: alex-entry-filter-build-data
-description: 'Build the shared entry_filter_data.csv for a block. Reads the filter groups registry (block-local override if present, else the shared default), pulls trade and market data via the TradeBlocks data layer, computes per-trade 1-lot economics (margin, premium, P/L, ROM%, PCR%), populates every filter column declared in the groups CSV, and enriches with market holiday proximity. Writes to {block}/alex-tradeblocks-ref/entry_filter_data.csv and reports which filter columns were populated vs skipped. Shared CSV for heatmap, pareto, parallel coords, threshold, and holiday enrichment skills.
-
-  '
+description: Build the shared entry_filter_data.csv for a block. Reads the filter groups registry (block-local override if present, else the shared default), pulls trade and market data via the TradeBlocks data layer, computes per-trade 1-lot economics (margin, premium, P/L, ROM%, PCR%), populates every filter column declared in the groups CSV, and enriches with market holiday proximity. Writes to {block}/alex-tradeblocks-ref/entry_filter_data.csv and reports which filter columns were populated vs skipped. Shared CSV for heatmap, pareto, parallel coords, threshold, and holiday enrichment skills.
 compatibility: Requires TradeBlocks MCP server with trade data and market data loaded. Python 3 with pandas and duckdb.
 metadata:
   author: alex-tradeblocks
-  version: 1.0.1
+  version: 1.0.2
 ---
 
 # Build Entry Filter Data CSV
@@ -41,7 +39,7 @@ Centralize the Phase 1 pipeline that every entry filter skill needs. Historicall
 ## Prerequisites
 
 - TradeBlocks MCP server running with trade data for the target block and market data loaded (VIX, VIX9D, VIX3M, underlying ticker daily bars, `market._context_derived`).
-- `Dev-TradeBlocks-Skills/_shared/entry_filter_groups.*.csv` exists (at least one variant).
+- A shared `entry_filter_groups.*.csv` is available (either block-local, or in the plugin's `_shared/` folder). The driver resolves this automatically.
 - Python 3 with `pandas` and `duckdb` installed.
 
 ## Process
@@ -52,19 +50,19 @@ If the block ID isn't already known, call `list_blocks` and confirm with the use
 
 ### Step 2 — Run the build
 
-Invoke the Python driver:
+Invoke the Python driver from this skill's base directory (announced at skill load as "Base directory for this skill"):
 
 ```bash
-python3 "Dev-TradeBlocks-Skills/alex-entry-filter-build-data/build_entry_filter_data.py" "<block_id>"
+python3 "{skill_dir}/build_entry_filter_data.py" "<block_id>"
 ```
 
-From the TradeBlocks Data root.
+Run from the TradeBlocks Data root (the script resolves TB root automatically).
 
 **Optional: pick a specific groups CSV variant.** If the user is experimenting with multiple filter-group variants (e.g. `entry_filter_groups.V1.csv`, `entry_filter_groups.calendar.csv`), pass `--groups-csv PATH` to select one explicitly. Path may be absolute or relative to the TB root.
 
 ```bash
-python3 "Dev-TradeBlocks-Skills/alex-entry-filter-build-data/build_entry_filter_data.py" "<block_id>" \
-    --groups-csv "Dev-TradeBlocks-Skills/_shared/entry_filter_groups.V2.csv"
+python3 "{skill_dir}/build_entry_filter_data.py" "<block_id>" \
+    --groups-csv "/absolute/or/tb-root-relative/path/to/entry_filter_groups.V2.csv"
 ```
 
 The script:

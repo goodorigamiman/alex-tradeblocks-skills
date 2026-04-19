@@ -1,10 +1,10 @@
 ---
 name: alex-tradeblocks-startup
 description: TradeBlocks startup check. Verifies MCP server, market data provider, skills (published + local dev), and DuckDB databases. Auto-starts services if down. Reads `alex_tradeblocks_startup_config.md` in the TradeBlocks Data root for user-specific paths and settings; on first run, discovers values and writes the config. Use at session start or when TradeBlocks tooling feels broken.
-compatibility: Requires Docker. Market data provider (ThetaData, Massive, or other) and dev workspace layout are discovered from the local config — no assumptions baked in.
+compatibility: "Requires Docker. Market data provider (ThetaData, Massive, or other) and dev workspace layout are discovered from the local config \u2014 no assumptions baked in."
 metadata:
   author: alex-tradeblocks
-  version: '4.2'
+  version: 4.2.1
 ---
 
 # Dev TradeBlocks Startup
@@ -287,7 +287,7 @@ Tools & Skills:
   TradeBlocks MCP            MCP server  .mcp/ (tradeblocks-mcp)                 2.3      M tools
   tradeblocks-skills         Plugin      davidromeo/tradeblocks-skills            1.0.0    9 skills
   alex-tradeblocks-skills    Plugin      goodorigamiman/alex-tradeblocks-skills   2.0.2    13 skills
-  Dev-TradeBlocks-Skills     Local dev   Dev-TradeBlocks-Skills/                  --       12 skills
+  <dev-workspace>            Local dev   (your dev_skills_folder path)            --       N skills
 ```
 
 Rules:
@@ -340,7 +340,7 @@ Skills under active development in `{dev_skills_folder}/`. Read the full `SKILL.
 
 | Skill | Version | Purpose |
 |---|---|---|
-| dev-entry-filter-pareto | 3.0-dev | [one-line description, ≤160 chars] |
+| alex-entry-filter-pareto | 3.0-dev | [one-line description, ≤160 chars] |
 | ... | ... | ... |
 
 Paths: `{tb_root}/{dev_skills_folder}/<skill-name>/SKILL.md`

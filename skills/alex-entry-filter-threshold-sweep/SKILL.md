@@ -1,12 +1,10 @@
 ---
 name: alex-entry-filter-threshold-sweep
-description: 'Pre-computes sweep results for every continuous AND categorical entry filter on a block. Writes TWO sibling CSVs next to entry_filter_data.csv: entry_filter_threshold_results.csv (continuous — wide retention-target grid with tightest/max_avg variants across AvgROR/AvgPCR × low/high/combo direction) and entry_filter_categorical_results.csv (categorical — one row per category × metric, columns in_sample and out_sample for inclusion vs exclusion impact). Downstream skills (heatmap, pareto, future consumers) read these CSVs instead of recomputing. Reads only two block-local CSVs; never builds data itself. Defers upstream to dev-entry-filter-build-data.
-
-  '
+description: "Pre-computes sweep results for every continuous AND categorical entry filter on a block. Writes TWO sibling CSVs next to entry_filter_data.csv: entry_filter_threshold_results.csv (continuous \u2014 wide retention-target grid with tightest/max_avg variants across AvgROR/AvgPCR \xD7 low/high/combo direction) and entry_filter_categorical_results.csv (categorical \u2014 one row per category \xD7 metric, columns in_sample and out_sample for inclusion vs exclusion impact). Downstream skills (heatmap, pareto, future consumers) read these CSVs instead of recomputing. Reads only two block-local CSVs; never builds data itself. Defers upstream to alex-entry-filter-build-data."
 compatibility: Python 3 standard library only. No MCP, no DuckDB, no numpy.
 metadata:
   author: alex-tradeblocks
-  version: 1.2.1
+  version: 1.2.2
 ---
 
 # Entry Filter Threshold Sweep
@@ -16,10 +14,12 @@ metadata:
 ## Architecture
 
 ```
-Dev-TradeBlocks-Skills/alex-entry-filter-threshold-sweep/
+{skill_dir}/
 ├── SKILL.md
 └── gen_sweep.py   ← the driver
 ```
+
+(`{skill_dir}` = this skill's base directory, announced when the skill is loaded.)
 
 Single CLI driver. No shared modules at runtime. No MCP, no DuckDB, no network. Monolithic Python.
 
@@ -111,7 +111,7 @@ One row per `(csv_column, category_value, metric)`. Row order follows the `Index
 ## CLI
 
 ```bash
-python3 "Dev-TradeBlocks-Skills/alex-entry-filter-threshold-sweep/gen_sweep.py" \
+python3 "{skill_dir}/gen_sweep.py" \
     BLOCK_ID \
     [--tb-root PATH] \
     [--groups-csv PATH] \
@@ -172,7 +172,7 @@ Retention is always computed from **net ROR** (the denominator) regardless of wh
 1. **Confirm the target block.**
 2. **Invoke the driver:**
    ```bash
-   python3 "Dev-TradeBlocks-Skills/alex-entry-filter-threshold-sweep/gen_sweep.py" "<BLOCK>"
+   python3 "{skill_dir}/gen_sweep.py" "<BLOCK>"
    ```
 3. **Handle non-zero exit codes** per the table above.
 4. **On exit 0:** report the CSV path and summary (rows written, targets, max retention). Suggest the heatmap or pareto as the next step.

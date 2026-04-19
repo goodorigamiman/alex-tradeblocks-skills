@@ -1,8 +1,6 @@
 ---
 name: alex-entry-filter-enrich-market-holiday
-description: 'Enrich trade data with market holiday proximity features. Adds 4 columns to entry_filter_data.csv: Days_to_Holiday, Weeks_to_Holiday, Days_from_Holiday, Weeks_from_Holiday. Uses entry_filter_holidays.default.csv as the holiday reference. Both full closures and early close days count as holidays.
-
-  '
+description: 'Enrich trade data with market holiday proximity features. Adds 4 columns to entry_filter_data.csv: Days_to_Holiday, Weeks_to_Holiday, Days_from_Holiday, Weeks_from_Holiday. Uses entry_filter_holidays.default.csv as the holiday reference. Both full closures and early close days count as holidays.'
 compatibility: Requires TradeBlocks MCP server with trade data loaded.
 metadata:
   author: alex-tradeblocks

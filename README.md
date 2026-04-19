@@ -9,7 +9,7 @@ Custom agent skills for analyzing Option Omega backtests and options trading por
 ## Folder layout
 
 ```
-Dev-TradeBlocks-Skills/
+<plugin source>/
   README.md                      This file — plugin overview and workflow guide
   _shared/                       Shared reference data + SQL templates (see _shared/README.md)
   dev-<skill-name>/              One folder per skill in development
@@ -152,7 +152,7 @@ The first time you run the startup skill, it probes your environment (TB root, d
 
 Expect questions like:
 - *"I found `ThetaData` in your `.env`. What command starts it?"* → Provide the exact shell command so the skill can auto-recover when it's down
-- *"You have `Dev-TradeBlocks-Skills/` — is this your dev workspace?"* → Answer yes/no. Pulled-only users answer no and get a simpler report
+- *"I detected a dev workspace folder — is this your local maintainer workspace?"* → Answer yes/no. Pulled-only users answer no and get a simpler report
 
 After first run, subsequent runs read the config silently and skip the interactive setup.
 
@@ -268,8 +268,8 @@ Platform-specific:
 
 The dev loop is:
 
-1. **Develop in `Dev-TradeBlocks-Skills/dev-<name>/`** — create or edit `SKILL.md`, `.py` modules, `.sql` templates. Test immediately as `/dev-<name>` (no publish needed).
-2. **Iterate until ready** — the `dev-tradeblocks-startup` skill keeps the `CLAUDE.md` Dev Skills Registry in sync so you can reference dev skills across sessions.
+1. **Develop in your dev workspace** — create or edit `SKILL.md`, `.py` modules, `.sql` templates inside a `dev-<name>/` folder. Test immediately as `/dev-<name>` (no publish needed).
+2. **Iterate until ready** — the `alex-tradeblocks-startup` skill keeps the `CLAUDE.md` Dev Skills Registry in sync so you can reference dev skills across sessions.
 3. **Publish when ready** — run `/alex-tradeblocks:alex-github-update`. It handles:
    - Rename `dev-<name>/` → `alex-<name>/`
    - Strip `-dev` from frontmatter version

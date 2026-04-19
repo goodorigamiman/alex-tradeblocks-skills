@@ -1,4 +1,4 @@
-# dev-entry-filter-analysis
+# alex-entry-filter-analysis
 
 One-shot orchestrator + analyst + learner for the entry-filter pipeline. Turns "I want to analyze this block's entry filters" into a single invocation that runs every upstream skill in order, reads the generated reports, and hands back a baseline-anchored filter shortlist — with warnings, correlation checks, and cross-session learnings applied.
 
@@ -14,21 +14,21 @@ It also **learns**. When the user corrects a recommendation, flags bad data, or 
 entry_filter_groups.*.csv ──┐
                              │  (labels, Entry Group, Threshold Analysis Default Report flag)
                              │
-   raw trade data (MCP) ─→ dev-entry-filter-build-data ─→ entry_filter_data.csv
+   raw trade data (MCP) ─→ alex-entry-filter-build-data ─→ entry_filter_data.csv
                                                                  │
-                                                                 ├─→ dev-entry-filter-threshold-sweep ─→ entry_filter_threshold_results.csv (continuous)
+                                                                 ├─→ alex-entry-filter-threshold-sweep ─→ entry_filter_threshold_results.csv (continuous)
                                                                  │                                       entry_filter_categorical_results.csv (binary+categorical)
                                                                  │
-                                                                 ├─→ dev-entry-filter-heatmap ─→ entry filter heatmap.html
+                                                                 ├─→ alex-entry-filter-heatmap ─→ entry filter heatmap.html
                                                                  │
-                                                                 └─→ dev-entry-filter-threshold-analysis × N ─→ entry filter threshold analysis {name}.html
+                                                                 └─→ alex-entry-filter-threshold-analysis × N ─→ entry filter threshold analysis {name}.html
                                                                              (one HTML per filter flagged with
                                                                               Threshold Analysis Default Report = TRUE)
 
    _shared/entry_filter_correlations.default.csv ──┐
    alex_entry_filter_analysis_preferences.md       │
                                                     ▼
-                  ┌────────────── dev-entry-filter-analysis (this skill) ───────────────┐
+                  ┌────────────── alex-entry-filter-analysis (this skill) ───────────────┐
                   │                                                                      │
                   │  READS:  threshold_results.csv  (metric-filtered: AvgROR OR AvgPCR)  │
                   │          categorical_results.csv (metric-filtered)                   │
@@ -44,7 +44,7 @@ entry_filter_groups.*.csv ──┐
                   │    • Baseline Impact table (each filter vs All Trades, ≤2/group)     │
                   │    • Marginal Impact table (each filter's contribution to AND set)   │
                   │    • "Other interesting" sidebar                                     │
-                  │    • Standby for /dev-create-datelist hand-off                       │
+                  │    • Standby for /alex-create-datelist hand-off                       │
                   │                                                                      │
                   │  APPENDS (on explicit user confirm):                                 │
                   │    • Learnings to preferences.md, scoped by tag                      │
@@ -52,8 +52,8 @@ entry_filter_groups.*.csv ──┐
                   └──────────────────────────────────────────────────────────────────────┘
 
                                      User decides next:
-                                     (a) go with Claude's picks  → /dev-create-datelist
-                                     (b) paste own picks         → /dev-create-datelist
+                                     (a) go with Claude's picks  → /alex-create-datelist
+                                     (b) paste own picks         → /alex-create-datelist
                                      (c) drill further, swap, re-analyze with PCR, etc.
 ```
 
@@ -72,7 +72,7 @@ entry_filter_groups.*.csv ──┐
 - **Metric isolation** — loads only the active metric's rows (AvgROR by default, AvgPCR on explicit request) to keep context tight.
 - **Baseline anchoring** — Baseline Impact table starts with an All Trades row so every delta reads against the same anchor.
 - **Marginal (leave-one-out) analysis** — Marginal Impact table adds a second view: for each filter, what does it contribute to the final AND set? Surfaces redundant filters (ones whose trades are already caught by others) that Baseline alone would mistakenly present as strong contributors.
-- **Shared canonical format with dev-create-datelist** — the two tables' columns and conventions are identical to what `dev-create-datelist` prints right before generating the OO code blocks. The user sees the same numbers whether they're still in analysis or ready to ship.
+- **Shared canonical format with alex-create-datelist** — the two tables' columns and conventions are identical to what `alex-create-datelist` prints right before generating the OO code blocks. The user sees the same numbers whether they're still in analysis or ready to ship.
 
 ## Understanding the two impact tables
 
@@ -81,7 +81,7 @@ Every analysis presents two tables that share a column set but answer different 
 - **Baseline Impact** — "What does each filter do on its own, compared to doing nothing?"
 - **Marginal Impact** — "What does each filter contribute to the set we're actually shipping?"
 
-A filter can look strong in one and weak in the other; both views are needed before accepting a shortlist. This format is shared 1:1 with the downstream `dev-create-datelist` skill — the same tables appear there immediately before the datelist code blocks, so the user sees the same numbers at every step of the pipeline.
+A filter can look strong in one and weak in the other; both views are needed before accepting a shortlist. This format is shared 1:1 with the downstream `alex-create-datelist` skill — the same tables appear there immediately before the datelist code blocks, so the user sees the same numbers at every step of the pipeline.
 
 ### Shared column set
 
@@ -222,7 +222,7 @@ If a learning is saved with the wrong scope or turns out to be wrong, the only r
 
 ### Skill depends on four upstream skills being installed
 
-This skill is pure orchestration. If any of `dev-entry-filter-build-data`, `dev-entry-filter-threshold-sweep`, `dev-entry-filter-heatmap`, or `dev-entry-filter-threshold-analysis` is missing or broken, the pipeline halts at that step and surfaces the error. The skill doesn't work around failures in its dependencies — it reports them.
+This skill is pure orchestration. If any of `alex-entry-filter-build-data`, `alex-entry-filter-threshold-sweep`, `alex-entry-filter-heatmap`, or `alex-entry-filter-threshold-analysis` is missing or broken, the pipeline halts at that step and surfaces the error. The skill doesn't work around failures in its dependencies — it reports them.
 
 ### No parallelism
 
@@ -238,8 +238,8 @@ The N threshold-analysis reports (one per TA-flagged filter) run sequentially. O
 
 ## Related skills
 
-- `/dev-entry-filter-build-data` — upstream step 1. Produces `entry_filter_data.csv` from raw trade data.
-- `/dev-entry-filter-threshold-sweep` — upstream step 2. Produces the two result CSVs this skill reads.
-- `/dev-entry-filter-heatmap` — upstream step 3. Generates the interactive visual reference (click-to-capture flows into Step 9's hand-off).
-- `/dev-entry-filter-threshold-analysis` — upstream step 4. Per-filter deep dive, one HTML per TA-flagged filter.
-- `/dev-create-datelist` — downstream. Typical next step after analysis; takes the accepted filter list and produces OO-compatible datelists (specific + blackout blocks).
+- `/alex-entry-filter-build-data` — upstream step 1. Produces `entry_filter_data.csv` from raw trade data.
+- `/alex-entry-filter-threshold-sweep` — upstream step 2. Produces the two result CSVs this skill reads.
+- `/alex-entry-filter-heatmap` — upstream step 3. Generates the interactive visual reference (click-to-capture flows into Step 9's hand-off).
+- `/alex-entry-filter-threshold-analysis` — upstream step 4. Per-filter deep dive, one HTML per TA-flagged filter.
+- `/alex-create-datelist` — downstream. Typical next step after analysis; takes the accepted filter list and produces OO-compatible datelists (specific + blackout blocks).

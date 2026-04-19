@@ -1,12 +1,10 @@
 ---
 name: alex-entry-filter-threshold-analysis
-description: 'Threshold analysis for a single entry filter on a block. Sweeps the filter across its unique values, computes retention references (99% through 50% of baseline Net ROR), and renders an interactive HTML chart with efficiency frontier, scatter, and OO filter translation. Reads only two block-local CSVs: entry_filter_data.csv and entry_filter_groups.*.csv. Never builds data — defers to dev-entry-filter-build-data. Filter labeling, ordering, and filter list all come from the groups CSV so the user can customize per-block by editing their local copy.
-
-  '
+description: "Threshold analysis for a single entry filter on a block. Sweeps the filter across its unique values, computes retention references (99% through 50% of baseline Net ROR), and renders an interactive HTML chart with efficiency frontier, scatter, and OO filter translation. Reads only two block-local CSVs: entry_filter_data.csv and entry_filter_groups.*.csv. Never builds data \u2014 defers to alex-entry-filter-build-data. Filter labeling, ordering, and filter list all come from the groups CSV so the user can customize per-block by editing their local copy."
 compatibility: Requires Python 3 with numpy. No MCP. No DuckDB. No network.
 metadata:
   author: alex-tradeblocks
-  version: 4.0.1
+  version: 4.0.2
 ---
 
 # Entry Filter Threshold Analysis
@@ -18,10 +16,12 @@ Single-filter deep-dive. Renders an interactive HTML chart showing how ROM, Net 
 Single CLI driver owned by this skill. No shared modules. No wrappers. No MCP.
 
 ```
-Dev-TradeBlocks-Skills/alex-entry-filter-threshold-analysis/
+{skill_dir}/
 ├── SKILL.md
 └── gen_threshold_analysis.py   ← the driver
 ```
+
+(`{skill_dir}` = this skill's base directory, announced when the skill is loaded.)
 
 The driver:
 1. Resolves the block folder and ref folder from `BLOCK_ID`.
@@ -48,7 +48,7 @@ The driver:
 ## CLI
 
 ```bash
-python3 "Dev-TradeBlocks-Skills/alex-entry-filter-threshold-analysis/gen_threshold_analysis.py" \
+python3 "{skill_dir}/gen_threshold_analysis.py" \
     BLOCK_ID [FILTER] \
     [--tb-root PATH] \
     [--groups-csv PATH] \
@@ -102,7 +102,7 @@ The filename uses the **Short Name** column value (sanitized — `/` becomes ` o
 1. **Confirm the target block.** If not already known, call `list_blocks` or ask.
 2. **Invoke the driver** with the user-specified filter (if given). Run from TB root:
    ```bash
-   python3 "Dev-TradeBlocks-Skills/alex-entry-filter-threshold-analysis/gen_threshold_analysis.py" "<BLOCK>" "<FILTER>"
+   python3 "{skill_dir}/gen_threshold_analysis.py" "<BLOCK>" "<FILTER>"
    ```
 3. **Handle non-zero exit codes** per the table above.
 4. **On exit 0:** surface the output path to the user and offer to `open` it.
@@ -161,7 +161,7 @@ Each chart exposes a **pair** of number inputs (Low and High) rendered directly 
 - Don't estimate ROM from aggregated P/L and aggregated margin. The driver computes baseline ROM correctly (per-trade ROM, averaged); don't replace with a simpler aggregation that double-normalizes.
 - Don't hard-code field-name lookups. All resolution goes through the block-local groups CSV.
 - Don't write block-specific wrapper scripts. The CLI is the single entry point.
-- Don't touch `Dev-TradeBlocks-Skills/_shared/` at runtime. This skill is strictly block-local.
+- Don't touch the plugin's `_shared/` folder at runtime. This skill is strictly block-local.
 
 ## Related skills
 

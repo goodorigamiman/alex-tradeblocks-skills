@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dev-entry-filter-threshold-analysis — CLI driver.
+alex-entry-filter-threshold-analysis — CLI driver.
 
 Generates an interactive threshold-analysis HTML report for a single entry filter
 on a block. Reads only two block-local CSVs; never builds data itself.
@@ -64,7 +64,7 @@ def resolve_data_csv(ref_folder: pathlib.Path) -> pathlib.Path:
     if not p.is_file():
         raise FileNotFoundError(
             f"entry_filter_data.csv not found in {ref_folder}.\n"
-            f"Run /dev-entry-filter-build-data BLOCK_ID first to build it."
+            f"Run /alex-entry-filter-build-data BLOCK_ID first to build it."
         )
     return p
 
@@ -81,7 +81,7 @@ def resolve_groups_csv(
       2. Single match in block's alex-tradeblocks-ref/entry_filter_groups.*.csv.
 
     No shared-folder fallback — this skill is strictly block-local. If zero
-    matches in the ref folder, the user must first run dev-entry-filter-build-data.
+    matches in the ref folder, the user must first run alex-entry-filter-build-data.
     """
     if explicit is not None:
         if not explicit.is_file():
@@ -92,7 +92,7 @@ def resolve_groups_csv(
     if len(matches) == 0:
         raise FileNotFoundError(
             f"No entry_filter_groups.*.csv in {ref_folder}.\n"
-            f"Run /dev-entry-filter-build-data BLOCK_ID first to set up the block ref folder."
+            f"Run /alex-entry-filter-build-data BLOCK_ID first to set up the block ref folder."
         )
     if len(matches) > 1:
         names = ", ".join(m.name for m in matches)

@@ -1,12 +1,10 @@
 ---
 name: alex-create-datelist
-description: 'Generate a filtered datelist from entry filter data for use in Option Omega. User specifies a field + threshold or custom criteria. Output is an OO-compatible ISO datelist with descriptive label, ready to copy-paste. Reads from shared entry_filter_data.csv when available. Usage as whitelist or blackout is contextual — the label provides the necessary info.
-
-  '
-compatibility: Reads `entry_filter_data.csv` directly — no MCP calls from this skill. Requires that upstream `dev-entry-filter-build-data` has already produced the CSV (which itself needs the TradeBlocks MCP server). Pure Python, standard library only.
+description: "Generate a filtered datelist from entry filter data for use in Option Omega. User specifies a field + threshold or custom criteria. Output is an OO-compatible ISO datelist with descriptive label, ready to copy-paste. Reads from shared entry_filter_data.csv when available. Usage as whitelist or blackout is contextual \u2014 the label provides the necessary info."
+compatibility: "Reads `entry_filter_data.csv` directly \u2014 no MCP calls from this skill. Requires that upstream `alex-entry-filter-build-data` has already produced the CSV (which itself needs the TradeBlocks MCP server). Pure Python, standard library only."
 metadata:
   author: alex-tradeblocks
-  version: 1.8.1
+  version: 1.8.3
 ---
 
 # Create Datelist
@@ -214,7 +212,7 @@ Both tables precede the code blocks in the fixed order. Both use the same compre
 | 2 | 3 | `Keep` | Count of trades passing the filter (or in the AND set, for Marginal Impact) | Integer, right-aligned |
 | 3 | 4 | `Out` | Count of trades non-null on the filter but excluded by it | Integer, right-aligned |
 | 4 | 5 | `%` | Baseline: `Keep / Total × 100`; Marginal: `Keep / N-1 × 100` | `XX.X%`, right-aligned |
-| 5 | 6 | `Net ROR` | Net ROR of the row's subset as % of baseline Net ROR | `XX.X%`, right-aligned |
+| 5 | 6 | `Net ROR` | **Absolute P/L retention** = `sum(pl_kept) / sum(pl_baseline) * 100`. NOT a per-trade Net ROR ratio. See "Net ROR retention — the ONLY definition" in alex-entry-filter-analysis SKILL.md. | `XX.X%`, right-aligned |
 | 6 | 7 | `+pts` | Delta of `Net ROR` vs the table's anchor row, in pp | `+X.X pp` / `-X.X pp`; anchor row = `—` |
 | 7 | 8 | `Avg ROR` | Mean `rom_pct` across the row's subset | `XX.XX%`, right-aligned |
 | 8 | 9 | `+pts` | Delta of `Avg ROR` vs the table's anchor row, in pp | `+X.XX pp` / `-X.XX pp`; anchor row = `—` |

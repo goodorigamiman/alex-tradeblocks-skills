@@ -1,12 +1,11 @@
 ---
 name: alex-entry-filter-heatmap
-description: 'Entry-filter retention heatmap for a block. Discovery Map (global, sorted by 80r% delta, includes Min/Max/Combo) + By Filter Group table (per-Entry-Group Min/Max/Combo restatement, cells color-only) + Binary & Categorical breakdown (clickable, In/Out side-by-side). Every data cell is click-to-capture — continuous threshold/combo expressions and binary/categorical In (==) / Out (!=) expressions all feed one selections panel, persisted in localStorage, copy-to-clipboard feeds dev-create-datelist. Reads THREE block-local CSVs and only these three: entry_filter_groups.*.csv (labels & organization), entry_filter_threshold_results.csv (continuous sweep data + block baselines), entry_filter_categorical_results.csv (binary + categorical In/Out stats). Does NOT read entry_filter_data.csv — every number it shows is pre-computed by dev-entry-filter-threshold-sweep. Defaults: AvgROR metric, max_avg variant, Report Heatmap column for filter inclusion. All three overridable via --sweep-metric, --sweep-variant, --heatmap-col.
-
-  '
+description: "Entry-filter retention heatmap for a block. Discovery Map (global, sorted by 80r% delta, includes Min/Max/Combo) + By Filter Group table (per-Entry-Group Min/Max/Combo restatement, cells color-only) + Binary & Categorical breakdown (clickable, In/Out side-by-side). Every data cell is click-to-capture \u2014 continuous threshold/combo expressions and binary/categorical In (==) / Out (!=) expressions all feed one selections panel, persisted in localStorage, copy-to-clipboard feeds alex-create-datelist. Reads THREE block-local CSVs and only these three: entry_filter_groups.*.csv (labels & organization), entry_filter_threshold_results.csv (continuous sweep data + block baselines), entry_filter_categorical_results.csv (binary + categorical In/Out stats). Does NOT read entry_filter_data.csv \u2014 every number it shows is pre-computed by alex-entry-filter-threshold-sweep. Defaults: AvgROR metric, max_avg variant, Report Heatmap column for filter inclusion. All three overridable via\
+  \ --sweep-metric, --sweep-variant, --heatmap-col."
 compatibility: Requires Python 3 standard library only. No MCP, no DuckDB, no network, no numpy.
 metadata:
   author: alex-tradeblocks
-  version: 5.0.0
+  version: 5.0.1
 ---
 
 # Entry Filter Heatmap
@@ -23,10 +22,12 @@ All-filter retention overview. Three sections:
 Single CLI driver owned by this skill. No shared modules at runtime. No MCP, no DuckDB.
 
 ```
-Dev-TradeBlocks-Skills/alex-entry-filter-heatmap/
+{skill_dir}/
 ├── SKILL.md
 └── gen_heatmap.py   ← the driver
 ```
+
+(`{skill_dir}` = this skill's base directory, announced when the skill is loaded.)
 
 The driver:
 1. Resolves the block folder and ref folder from `BLOCK_ID`.
@@ -123,7 +124,7 @@ Clicks on Binary/Categorical Breakdown cells are not captured (those don't have 
 ## CLI
 
 ```bash
-python3 "Dev-TradeBlocks-Skills/alex-entry-filter-heatmap/gen_heatmap.py" \
+python3 "{skill_dir}/gen_heatmap.py" \
     BLOCK_ID \
     [--tb-root PATH] \
     [--groups-csv PATH] \
@@ -185,7 +186,7 @@ At the top of the report, a collapsible **Filter Reference** legend (`<details>`
 1. **Confirm the target block.** If not already known, call `list_blocks` or ask.
 2. **Invoke the driver:**
    ```bash
-   python3 "Dev-TradeBlocks-Skills/alex-entry-filter-heatmap/gen_heatmap.py" "<BLOCK>"
+   python3 "{skill_dir}/gen_heatmap.py" "<BLOCK>"
    ```
 3. **Handle non-zero exit codes per the table above.**
 4. **On exit 0:** surface the output path to the user and offer to `open` it.

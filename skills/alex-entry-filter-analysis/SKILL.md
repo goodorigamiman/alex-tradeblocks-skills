@@ -1,12 +1,10 @@
 ---
 name: alex-entry-filter-analysis
-description: 'One-shot orchestrator for entry-filter analysis on a block. Runs build-data → threshold-sweep → heatmap → threshold-analysis (for filters flagged in the groups CSV''s "Threshold Analysis Default Report" column), then reads the result CSVs + correlations + groups metadata + a local preferences file to produce a baseline-anchored summary and a filter shortlist (≤2 per Entry Group) ready to feed to dev-create-datelist. Analysis is grounded in the generated reports; out-of-context insights surface as explicit gap warnings. Default metric AvgROR; AvgPCR only on explicit user request (and PCR output is exploratory — see README limitations). Cross-session learning via alex_entry_filter_analysis_preferences.md at TB root.
-
-  '
+description: "One-shot orchestrator for entry-filter analysis on a block. Runs build-data \u2192 threshold-sweep \u2192 heatmap \u2192 threshold-analysis (for filters flagged in the groups CSV's \"Threshold Analysis Default Report\" column), then reads the result CSVs + correlations + groups metadata + a local preferences file to produce a baseline-anchored summary and a filter shortlist (\u22642 per Entry Group) ready to feed to alex-create-datelist. Analysis is grounded in the generated reports; out-of-context insights surface as explicit gap warnings. Default metric AvgROR; AvgPCR only on explicit user request (and PCR output is exploratory \u2014 see README limitations). Cross-session learning via alex_entry_filter_analysis_preferences.md at TB root."
 compatibility: Orchestrator only. No Python. Depends on four upstream entry-filter dev skills.
 metadata:
   author: alex-tradeblocks
-  version: 1.1.2
+  version: 1.2.1
 ---
 
 # Entry Filter Analysis
@@ -113,6 +111,31 @@ On any trigger:
 
 ## Claude Analysis Guidance (locked rules)
 
+### Net ROR retention — the ONLY definition (non-negotiable)
+
+**"Net ROR retention" ALWAYS means absolute P/L retention, not a per-trade Net ROR ratio.** This is the single most important definition in the skill. Miss it and every `+pts Net ROR` number in the output is wrong by a factor of 2–5×.
+
+**Formula — memorize this, do not deviate:**
+
+```
+Net ROR retention (%) = sum(pl_per_contract for kept trades) / sum(pl_per_contract for ALL trades) * 100
+```
+
+- Denominator is always the **baseline total P/L** across all trades in the block. Not the kept subset's total, not the margin-weighted anything.
+- Numerator is the kept subset's total P/L.
+- Bounded roughly at `[negative, ~110%]` in practice — can exceed 100% only when excluded trades have **negative** aggregate P/L (removing losers lifts retention above baseline).
+- Values above ~150% are a **red flag** — you've almost certainly computed the wrong formula. Stop and check.
+
+**What this is NOT:**
+
+- ❌ `(sum_pl_kept / sum_margin_kept) / (sum_pl_base / sum_margin_base)` — this is a per-trade Net ROR **ratio**, not retention. Produces numbers like 300-400% for aggressive filters. **Do not compute this.**
+- ❌ `avg_rom_kept / avg_rom_base` — similar trap, same wrong scale.
+- ❌ Anything involving margin in the denominator.
+
+**Where the sweep CSV sits:** the sweep's `max_net_ror` column and every `R_T` retention-target column use the absolute-retention formula above. When you compute retention for AND sets from raw trade data, use the SAME formula so downstream comparisons are apples-to-apples.
+
+**Self-check before emitting any Baseline or Marginal Impact table:** pick the row with the highest `Net ROR` value. If it exceeds ~110%, re-derive from first principles: `sum_pl_kept / sum_pl_baseline`. If the number changes materially, your code is wrong — fix it before the table ships.
+
 ### Scope lock (non-negotiable)
 
 Recommendations MUST be grounded in data actually present in the generated reports:
@@ -205,8 +228,8 @@ Marginal Impact — each row shows the filter's effect on the subset that alread
 | `Keep` | total trades | trades passing this filter | full AND count (constant across Marginal filter rows) |
 | `Out` | 0 | non-null trades failing this filter | trades this filter excludes from the N-1 pool |
 | `%` | 100% (of total) | Keep / total | Keep / N-1 (passthrough rate on N-1 pool) |
-| `Net ROR` | 100% | subset Net ROR as % of baseline | **full AND Net ROR as % of baseline** (constant across Marginal rows) |
-| `Net ROR +pts` | — | Net ROR − 100 | (full AND Net %) − (N-1 Net %) in absolute pp |
+| `Net ROR` | 100% | **absolute P/L retention** = `sum(pl_kept) / sum(pl_baseline) * 100` — see the locked "Net ROR retention" rule above | **full AND absolute P/L retention** (constant across Marginal rows) |
+| `Net ROR +pts` | — | Net ROR − 100 (in absolute pp) | (full AND retention) − (N-1 retention) in absolute pp |
 | `Avg ROR` | baseline avg | subset avg | full AND avg (constant) |
 | `Avg ROR +pts` | — | subset avg − baseline avg | full AND avg − N-1 avg in absolute pp |
 | `WR` | baseline WR | subset WR | full AND WR (constant) |
@@ -214,11 +237,15 @@ Marginal Impact — each row shows the filter's effect on the subset that alread
 
 **Unified +pts reading:** all three `+pts` columns in both tables mean the same thing — an absolute pp delta between the row's anchor and the row's subject. In Baseline, anchor = All Trades, subject = filter's keep subset. In Marginal, anchor = N-1 pool for that filter, subject = full AND (landing state). No ratios or mixed framings.
 
-**Consistency check for Marginal:** every filter row must satisfy `N-1 = Keep + Out`. If it doesn't, the computation is wrong.
+**Consistency checks — run these before emitting either table:**
+
+1. **Marginal row accounting:** every filter row must satisfy `N-1 = Keep + Out`. If it doesn't, the pool computation is wrong.
+2. **Net ROR sanity:** no row's `Net ROR` should exceed ~110% unless excluded trades have a genuinely negative aggregate P/L. Values of 130%+ almost always mean the per-trade-ratio trap (see the locked "Net ROR retention" rule). Re-derive as `sum_pl_kept / sum_pl_baseline` and confirm before shipping.
+3. **Baseline row always reads 100% Net ROR.** If your baseline row is showing something else, your formula is wrong.
 
 **How to read the two tables together:** Baseline Impact answers "what does each filter do on its own?" Marginal Impact answers "what does each filter contribute to the set we're actually shipping?" A filter that reads strong in Baseline but shows `Out=0, +pts=0` in Marginal is redundant inside the AND set — its Baseline effect is driven by a correlated filter already in the set. See the Preferences file's Global learnings for more on interpreting Marginal=0 patterns.
 
-**Grouping (analysis skill only):** within Baseline Impact, group filter rows by Entry Group in the order the groups appear in the groups CSV. Max 2 filter rows per Entry Group (per the per-group cap rule). Marginal Impact does not regroup — it lists filters in the same order as the Baseline table's filter rows.
+**Row ordering (both tables):** filters appear in the order set by the groups CSV `Index` column. **Do not insert Entry Group headers, bold section rows, or any group-level dividers inside the tables** — headers add clutter and break the clean 10-column / 11-column grid readers scan. The Entry Group is still enforced by the per-group cap rule (≤2 filters per group in the final recommendation) but that rule shapes *selection*, not presentation. If a user asks "which group is this filter in?", refer them to the groups CSV or mention it in the Other-Interesting sidebar — not in the main table.
 
 ### Categorical: always probe holiday-week buckets
 
@@ -288,8 +315,12 @@ Baseline Impact (AvgROR, metric-isolated):
 | Filter | Keep | Out | % | Net ROR | +pts | Avg ROR | +pts | WR | +pts |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | **All Trades (baseline)** | Nₜ | 0 | 100.0% | 100.0% | — | B.BB% | — | W.W% | — |
-| …                        (≤ 2 rows per Entry Group, grouped)                            |
+| {f1} | N₁ | K₁ | T₁% | R₁% | ±ΔR₁ | A₁% | ±ΔA₁ | W₁% | ±ΔW₁ |
+| {f2} | N₂ | K₂ | T₂% | R₂% | ±ΔR₂ | A₂% | ±ΔA₂ | W₂% | ±ΔW₂ |
+| … | … | … | … | … | … | … | … | … | … |
 | **All AND (specific dates)** | N∩ | B∪ | T∩% | R∩% | ±ΔR∩ | A∩% | ±ΔA∩ | W∩% | ±ΔW∩ |
+
+(One row per filter in groups-CSV Index order. No Entry Group headers — tables stay flat.)
 
 Marginal Impact (same AvgROR, each row = filter's effect on the N-1 subset):
 
@@ -335,7 +366,7 @@ to swap any in/out first? Paste alternate picks if you used the heatmap click-ca
 
 ## CLI / Invocation
 
-This skill has no CLI of its own. User invokes via `/alex-entry-filter-analysis` (optionally with block ID) and Claude orchestrates the upstream skills via their `/dev-*` slash commands.
+This skill has no CLI of its own. User invokes via `/alex-entry-filter-analysis` (optionally with block ID) and Claude orchestrates the upstream skills via their `/alex-*` slash commands.
 
 ## Preferences file — schema
 
@@ -379,6 +410,8 @@ remove by hand-editing.
 - **Don't silently widen the per-group cap above 2.** If the user wants more, they ask explicitly and accept the correlation-risk warning.
 - **Don't skip the correlation cross-check.** Even one high-r pair in the recommendation undermines the shortlist's validity.
 - **Don't recompute metrics that the CSVs already hold.** Read, don't re-derive — the sweep CSVs are the source of truth for every metric.
+- **Don't invent a custom Net ROR formula for the AND set.** When the AND set forces you to compute from raw trade data (because the sweep is per-single-filter), use the exact same formula the sweep uses: `sum(pl_kept) / sum(pl_baseline) * 100`. Do not divide by margin totals. Do not take a ratio of average per-trade ROR. See the locked "Net ROR retention" rule — this is the bug that costs users real decisions.
+- **Don't add Entry Group headers inside Baseline or Marginal tables.** Clean flat tables only. Grouping drives *selection logic* (per-group cap), not presentation.
 - **Don't auto-save preferences.** Every learning requires explicit user confirmation AND a scope choice before being written.
 - **Don't overwrite the preferences file.** Appends only. Hand-edit to remove or correct.
 - **Don't treat PCR output as production-grade.** The protocol is calibrated for ROR. See README limitations.

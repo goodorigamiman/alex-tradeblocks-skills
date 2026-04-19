@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dev-entry-filter-threshold-sweep — CLI driver.
+alex-entry-filter-threshold-sweep — CLI driver.
 
 Pre-computes sweep results for every continuous AND categorical entry filter
 on a block, producing two sibling CSVs that downstream skills (heatmap, pareto,
@@ -88,7 +88,7 @@ def resolve_data_csv(ref_folder: pathlib.Path) -> pathlib.Path:
     if not p.is_file():
         raise FileNotFoundError(
             f"entry_filter_data.csv not found in {ref_folder}.\n"
-            f"Run /dev-entry-filter-build-data BLOCK_ID first."
+            f"Run /alex-entry-filter-build-data BLOCK_ID first."
         )
     return p
 
@@ -105,7 +105,7 @@ def resolve_groups_csv(
     if len(matches) == 0:
         raise FileNotFoundError(
             f"No entry_filter_groups.*.csv in {ref_folder}.\n"
-            f"Run /dev-entry-filter-build-data BLOCK_ID first."
+            f"Run /alex-entry-filter-build-data BLOCK_ID first."
         )
     if len(matches) > 1:
         names = ", ".join(m.name for m in matches)

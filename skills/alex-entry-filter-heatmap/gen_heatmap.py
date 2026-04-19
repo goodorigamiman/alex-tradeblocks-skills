@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dev-entry-filter-heatmap — CLI driver.
+alex-entry-filter-heatmap — CLI driver.
 
 Builds the entry-filter retention heatmap for a block. Reads only two block-local
 CSVs; never builds data itself.
@@ -83,7 +83,7 @@ def resolve_groups_csv(
     if len(matches) == 0:
         raise FileNotFoundError(
             f"No entry_filter_groups.*.csv in {ref_folder}.\n"
-            f"Run /dev-entry-filter-build-data BLOCK_ID first to set up the block ref folder."
+            f"Run /alex-entry-filter-build-data BLOCK_ID first to set up the block ref folder."
         )
     if len(matches) > 1:
         names = ", ".join(m.name for m in matches)
@@ -192,7 +192,7 @@ def resolve_sweep_csv(ref_folder: pathlib.Path) -> pathlib.Path:
     if not p.is_file():
         raise FileNotFoundError(
             f"entry_filter_threshold_results.csv not found in {ref_folder}.\n"
-            f"Run /dev-entry-filter-threshold-sweep BLOCK_ID first to build it."
+            f"Run /alex-entry-filter-threshold-sweep BLOCK_ID first to build it."
         )
     return p
 
@@ -202,7 +202,7 @@ def resolve_cat_sweep_csv(ref_folder: pathlib.Path) -> pathlib.Path:
     if not p.is_file():
         raise FileNotFoundError(
             f"entry_filter_categorical_results.csv not found in {ref_folder}.\n"
-            f"Run /dev-entry-filter-threshold-sweep BLOCK_ID first to build it."
+            f"Run /alex-entry-filter-threshold-sweep BLOCK_ID first to build it."
         )
     return p
 
@@ -536,7 +536,7 @@ def _generate(config):
     categorical_filters.sort(key=lambda x: (x["group"], x["index"]))
 
     # ── Load pre-computed sweep results — all 4 (metric × variant) combos ──
-    # Computation lives in dev-entry-filter-threshold-sweep. We embed all four
+    # Computation lives in alex-entry-filter-threshold-sweep. We embed all four
     # combinations in the HTML so the user can toggle metric (AvgROR/AvgPCR)
     # and variant (tightest/max_avg) via dropdowns, without regenerating. The
     # sweep_metric / sweep_variant config values pick which is shown on load.
@@ -599,7 +599,7 @@ def _generate(config):
     print(f"  Retention targets: R_{TARGETS[0]} … R_{TARGETS[-1]}  ({len(TARGETS)} levels, 5% step)")
 
     # ── Binary/categorical summaries (loaded from cat_sweep_csv) ─────────────
-    # Data precomputed by dev-entry-filter-threshold-sweep. This generator no
+    # Data precomputed by alex-entry-filter-threshold-sweep. This generator no
     # longer reads entry_filter_data.csv for these — every number below comes
     # from entry_filter_categorical_results.csv joined on csv_column.
     #

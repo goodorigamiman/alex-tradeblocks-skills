@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dev-entry-filter-build-data — build entry_filter_data.csv for a block.
+alex-entry-filter-build-data — build entry_filter_data.csv for a block.
 
 Reads the filter groups CSV to decide which columns to build, pulls trade +
 market data via read-only DuckDB, computes per-trade 1-lot economics, populates
@@ -711,7 +711,7 @@ def main() -> int:
         holidays_rel = holidays_csv if holiday_ok else None
 
     # Tag each path as [block-local] (lives in block's alex-tradeblocks-ref/) or
-    # [shared] (lives in Dev-TradeBlocks-Skills/_shared/) or [explicit] (user-supplied).
+    # [shared] (lives in the plugin's _shared/ folder) or [explicit] (user-supplied).
     def locality_tag(p: pathlib.Path) -> str:
         try:
             p_resolved = p.resolve()
