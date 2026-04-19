@@ -4,7 +4,7 @@ description: TradeBlocks startup check. Verifies MCP server, market data provide
 compatibility: Requires Docker. Market data provider (ThetaData, Massive, or other) and dev workspace layout are discovered from the local config — no assumptions baked in.
 metadata:
   author: alex-tradeblocks
-  version: "4.1"
+  version: '4.2'
 ---
 
 # Dev TradeBlocks Startup
@@ -340,7 +340,7 @@ Skills under active development in `{dev_skills_folder}/`. Read the full `SKILL.
 
 | Skill | Version | Purpose |
 |---|---|---|
-| alex-entry-filter-pareto | 3.0-dev | [one-line description, ≤160 chars] |
+| dev-entry-filter-pareto | 3.0-dev | [one-line description, ≤160 chars] |
 | ... | ... | ... |
 
 Paths: `{tb_root}/{dev_skills_folder}/<skill-name>/SKILL.md`

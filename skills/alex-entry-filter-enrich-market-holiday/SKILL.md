@@ -1,14 +1,12 @@
 ---
 name: alex-entry-filter-enrich-market-holiday
-description: >
-  Enrich trade data with market holiday proximity features. Adds 4 columns to
-  entry_filter_data.csv: Days_to_Holiday, Weeks_to_Holiday, Days_from_Holiday,
-  Weeks_from_Holiday. Uses entry_filter_holidays.default.csv as the holiday reference.
-  Both full closures and early close days count as holidays.
+description: 'Enrich trade data with market holiday proximity features. Adds 4 columns to entry_filter_data.csv: Days_to_Holiday, Weeks_to_Holiday, Days_from_Holiday, Weeks_from_Holiday. Uses entry_filter_holidays.default.csv as the holiday reference. Both full closures and early close days count as holidays.
+
+  '
 compatibility: Requires TradeBlocks MCP server with trade data loaded.
 metadata:
   author: alex-tradeblocks
-  version: "1.0.1"
+  version: 1.0.2
 ---
 
 # Enrich Market Holiday Proximity
@@ -138,9 +136,8 @@ If `entry_filter_holidays.default.csv` doesn't exist, create it with this data o
 
 ## Related Skills
 
-- `alex-threshold-analysis` — Sweep Days_to_Holiday or Weeks_to_Holiday to find optimal filter thresholds
-- `alex-entry-filter-pareto` — Compare holiday proximity filters against all other entry filters
-- `alex-entry-filter-parallel-coords` — Visualize holiday proximity alongside other filter dimensions
+- `alex-entry-filter-threshold-analysis` — Sweep Days_to_Holiday or Weeks_to_Holiday to find optimal filter thresholds
+- `alex-entry-filter-heatmap` — See holiday-proximity buckets alongside every other filter in the Binary & Categorical Breakdown
 - `alex-create-datelist` — Generate OO-compatible datelist excluding/including holiday-adjacent dates
 
 ## Notes

@@ -23,7 +23,7 @@ Skills follow the `dev-<name>/` convention while in development; on publish, `al
 
 ## What's in this plugin
 
-12 skills organized into three groups:
+9 skills organized into three groups:
 
 ### Startup & tooling
 
@@ -31,26 +31,23 @@ Skills follow the `dev-<name>/` convention while in development; on publish, `al
 |-------|---------|
 | `alex-tradeblocks-startup` | Health check for MCP server, market data provider, plugin drift, DuckDB state, market data freshness, and enrichment. Auto-recovers Docker/ThetaData when possible. **Run this first in every session.** |
 | `alex-github-update` | Publish dev skills to the GitHub marketplace. Handles version bumps, rename transforms, support-file sync, commits, and pushes. |
-| `alex-sync-profiles` | Walk all block folders and upsert their `trade_profile.json` into `profiles.strategy_profiles` via the MCP server. |
 | `alex-normalize-statistics` | Run `get_statistics` via MCP and normalize P&L / margin to per-contract terms for cross-strategy comparison. |
 
 ### Entry filter analysis
 
 | Skill | Purpose |
 |-------|---------|
-| `alex-entry-filter-pareto` | Pareto chart comparing all candidate entry filters side-by-side: Avg ROR vs % of baseline Net ROR retained. |
-| `alex-entry-filter-heatmap` | ROR retention heatmap: at what threshold does each filter retain 90%→10% of baseline Net ROR? Colored by Avg ROM. |
-| `alex-entry-filter-parallel-coords` | Interactive D3 parallel-coordinates plot of filter values per trade, colored by ROM. One axis per Report V1 filter, grouped by Entry Group (A–H). |
-| `alex-entry-filter-time` | Build intraday premium curve CSV — net 4-leg position premium at every minute of the trading day per trade. |
-| `alex-entry-filter-time-overlay` | Intraday premium overlay chart with percentile bands (p10/p95, p20/p80, p30/p50). |
+| `alex-entry-filter-build-data` | Build the shared `entry_filter_data.csv` for a block — one row per trade, every filter column + per-trade 1-lot economics + holiday-proximity enrichment. Upstream of every other entry-filter skill. |
 | `alex-entry-filter-enrich-market-holiday` | Add Days_to_Holiday / Weeks_to_Holiday / Days_from_Holiday / Weeks_from_Holiday columns to `entry_filter_data.csv`. |
+| `alex-entry-filter-threshold-sweep` | Pre-compute retention sweep results for every continuous AND categorical/binary entry filter. Writes two sibling CSVs (`entry_filter_threshold_results.csv` + `entry_filter_categorical_results.csv`) that downstream reports consume without recomputing. |
+| `alex-entry-filter-heatmap` | Three-section retention heatmap: Discovery Map (global, 80r%-sorted), By Filter Group (per-Entry-Group Min/Max/Combo), Binary & Categorical Breakdown (clickable In/Out). Every cell click-captures a filter expression into a floating selections panel; Copy-to-clipboard feeds `alex-create-datelist`. |
 
 ### Threshold exploration
 
 | Skill | Purpose |
 |-------|---------|
-| `alex-threshold-analysis` | Generic threshold sweep for any trade or market field (SLR, VIX, premium, gap, etc.). Bidirectional (≥ / ≤), with efficiency frontier chart and OO filter translation. |
-| `alex-create-datelist` | Generate a filtered datelist from entry filter data for use as an Option Omega datelist input. |
+| `alex-entry-filter-threshold-analysis` | Single-filter deep dive — threshold sweep, scatter, efficiency frontier with interactive zoom, and OO filter translation. Use when a heatmap cell surfaces an interesting filter and you want to explore its full curve. |
+| `alex-create-datelist` | Generate OO-compatible datelists from filter expressions. Emits two code blocks: specific dates (AND-intersection, OO whitelist slot) and blackout dates (per-filter, OO blackout slot). |
 
 ---
 

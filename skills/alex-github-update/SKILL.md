@@ -1,18 +1,17 @@
 ---
 name: alex-github-update
-description: >
-  Publish dev skills to the GitHub marketplace. Audits versions against cache, flags content
-  changes without version bumps, syncs files to the repo with name/version transforms, commits,
-  pushes, and triggers cache update. Config-driven — builds alex_github_update_config.md on first run.
+description: 'Publish dev skills to the GitHub marketplace. Audits versions against cache, flags content changes without version bumps, syncs files to the repo with name/version transforms, commits, pushes, and triggers cache update. Config-driven — builds alex_github_update_config.md on first run.
+
+  '
 compatibility: Requires git, gh CLI, and access to the GitHub repo configured in alex_github_update_config.md.
 metadata:
   author: alex-tradeblocks
-  version: "2.1"
+  version: '2.2'
 ---
 
 # Dev GitHub Update
 
-Publish dev skills from the local dev folder to the GitHub marketplace plugin repo. Five steps: load config, audit versions, sync files, commit & push, update cache.
+Publish dev skills from the local dev folder to the GitHub marketplace plugin repo. Six steps: load config → **preview plan (awaits user confirm)** → audit versions → sync files → commit & push → update cache.
 
 ## Sync model: strict mirror with allowlist (Model A)
 
@@ -119,9 +118,66 @@ The user edits by hand. The skill detects drift (e.g. repo moved, new exclusions
 
 ---
 
+## Step 0.5: Publish Plan Preview (MUST confirm before proceeding)
+
+**Purpose:** give the user a clean read of exactly which skills will be published this run, which will be skipped, and which excluded skills will be deleted from the repo — BEFORE any audit or sync work runs. This is the gate; everything after it is actual work.
+
+### Procedure
+
+1. Enumerate dev skills: `ls {dev_skills_folder}/{dev_prefix}*/SKILL.md`.
+2. Partition by `exclude_skills` (membership match on the full dev-skill folder name, e.g. `dev-entry-filter-pareto`):
+   - **Publish set** — dev skills NOT in `exclude_skills`.
+   - **Skip set** — dev skills IN `exclude_skills`.
+3. For each skill in the Skip set, probe the repo at `{repo_path}/{skills_dir}/{published_prefix}{stem}/`. If the folder exists, mark the skill **"in repo — will be removed"**. Otherwise mark **"not in repo — no-op"**.
+4. Render the preview table to the user:
+
+```
+Publish plan ({total} dev skills total)
+
+  WILL PUBLISH (N)
+    alex-entry-filter-heatmap              → alex-entry-filter-heatmap       (v5.0.0-dev)
+    alex-entry-filter-threshold-sweep      → alex-entry-filter-threshold-sweep (v1.2.0-dev)
+    alex-entry-filter-build-data           → alex-entry-filter-build-data    (v1.0.0-dev)
+    alex-entry-filter-enrich-market-holiday → alex-entry-filter-enrich-market-holiday (v1.0.1-dev)
+    alex-create-datelist                   → alex-create-datelist            (v1.5.0-dev)
+    alex-normalize-statistics              → alex-normalize-statistics       (v1.0.1-dev)
+
+  WILL SKIP (M — in exclude_skills)
+    dev-entry-filter-pareto               [in repo — WILL BE REMOVED from repo]
+    alex-entry-filter-threshold-analysis   [in repo — WILL BE REMOVED from repo]
+    dev-entry-filter-parallel-coords      [not in repo — no-op]
+    dev-entry-filter-time                 [not in repo — no-op]
+    dev-entry-filter-time-overlay         [not in repo — no-op]
+    alex-github-update                     [not in repo — no-op]
+    dev-sync-profiles                     [not in repo — no-op]
+    alex-tradeblocks-startup               [not in repo — no-op]
+```
+
+5. **Prompt the user:** *"Proceed to audit the {N} publish-set skills? (Y/n) Anything to add or remove from `exclude_skills` before continuing? Edit `alex_github_update_config.md` and re-run if so."*
+
+6. **On `n` or uncertainty: abort cleanly.** Report: *"No changes made. Edit `alex_github_update_config.md` → `exclude_skills`, then re-run."*. Do not touch any files.
+
+7. **On `Y`: record the Publish set and Skip set for the remaining steps** — the audit uses them to tier severity, the sync uses them to drive deletion. Do not re-enumerate from `exclude_skills` later; decisions are fixed at this point.
+
+### What this step does NOT do
+
+- No version checks, no content diffs, no cache lookups. Those belong in Step 1. This step's only job is "here's the plan, confirm before I work."
+- No file mutations. The preview is read-only. If the user wants to change exclusions, they edit config and re-invoke — the skill never edits `exclude_skills` on the user's behalf.
+
+---
+
 ## Step 1: Version & Content Audit
 
-For each dev skill in `{dev_skills_folder}/*/SKILL.md` (excluding any in `exclude_skills`):
+This step is **severity-tiered by publish status**:
+
+| Status | What runs | How findings are handled |
+|---|---|---|
+| **Publish set** (not in `exclude_skills`) | Full audit: version+content diff vs cache & repo; dependency/cross-skill reference checks (see below). | **CRITICAL** — FLAG and MISMATCH findings block sync; user must resolve or override. |
+| **Skip set** (in `exclude_skills`) | Same version+content checks run, but findings are relabelled. | **WARNING** — reported so the user sees rot, but they do NOT block and require no action. |
+
+The rationale: the user opted the Skip-set skills out for a reason (not ready to publish, in-flux, etc.), so "their version doesn't match cache" or "content changed without a bump" is expected noise, not a problem to act on. The preview in Step 0.5 already confirmed the partition; Step 1 just surfaces issues at the appropriate severity.
+
+### For each dev skill (Publish + Skip sets):
 
 1. Parse dev SKILL.md frontmatter with `yaml.safe_load` → extract `name`, `metadata.version` (or `version`), full file content.
 2. Derive the **stem** by stripping `{dev_prefix}` from the name (e.g. `{dev_prefix}my-skill` → `my-skill`).
@@ -131,6 +187,20 @@ For each dev skill in `{dev_skills_folder}/*/SKILL.md` (excluding any in `exclud
 4. Look for a matching **repo skill**:
    - Check `{repo_path}/{skills_dir}/{published_prefix}{stem}/SKILL.md`
    - If found, read full content for diff comparison.
+
+### Dependency & cross-skill reference checks (Publish set only, critical)
+
+For each skill in the Publish set, additionally verify:
+
+| Check | Scope | What it catches |
+|---|---|---|
+| **Referenced shared files exist** | Scan the skill's `*.py` / `*.sql` / SKILL.md for paths like `_shared/foo.default.sql` — every referenced file must exist under `{dev_skills_folder}/{support_files_src}/`. | Prevents shipping a skill that silently breaks because its shared dependency isn't in `_shared/`. |
+| **Cross-skill references resolve in-set** | Scan the skill's body for other `{dev_prefix}*` skill names. Every referenced name must either be in the Publish set, or not a dev skill at all. References to Skip-set skills are CRITICAL — they'd break once published (the target wouldn't exist in the marketplace). | Prevents published skills from referencing a skill that was deliberately excluded. |
+| **Adjacent helper files present** | If SKILL.md references a sibling `.py` (e.g. `gen_heatmap.py`), confirm the file exists in the dev skill folder. | Prevents ship of a SKILL.md that points to a deleted helper. |
+
+For **Skip set** skills, the same checks run but findings are reported as WARNING (user isn't publishing the skill this round, so a broken reference in it is rot the user has deferred handling).
+
+### Comparison logic for version/content:
 
 **Comparison logic:**
 
@@ -147,18 +217,33 @@ For each dev skill in `{dev_skills_folder}/*/SKILL.md` (excluding any in `exclud
 
 ```
 Version & Content Audit:
-  Skill                             Dev Ver   Cache Ver  Changed?  Status
-  {dev_prefix}skill-a               3.0-dev   1.0        yes       READY (dev ahead)
-  {dev_prefix}skill-b               3.0-dev   1.0        yes       READY (dev ahead)
-  {dev_prefix}skill-c               2.0-dev   --         --        NEW
-  ...
 
-  Summary: N ready · M new · J skipped (no change) · K excluded
+  Publish set (CRITICAL severity):
+    Skill                             Dev Ver   Cache Ver  Changed?  Status        Findings
+    alex-entry-filter-heatmap          5.0-dev   4.6        yes       READY         —
+    alex-entry-filter-threshold-sweep  1.2-dev   1.0        yes       READY         —
+    alex-entry-filter-build-data       1.0-dev   1.0        no        SKIPPED       —
+    alex-create-datelist               1.5-dev   1.4        yes       READY         ref to alex-threshold-analysis
+                                                                                    (not in publish set)
+    ...
+
+  Skip set (WARNING severity — no action required):
+    dev-entry-filter-pareto           3.0-dev   3.0        yes       STALE          content diff vs cache
+    alex-entry-filter-threshold-analysis 4.0-dev 3.0        yes       STALE          content diff vs cache
+    ...
+
+  Summary (publish set): N ready · M new · J unchanged · F flagged · D critical findings
+  Summary (skip set):    S total · W warnings (informational only)
 ```
 
-**If any FLAG rows exist:** prompt the user with specific instructions: *"These skills have content changes but the dev version (after stripping -dev) matches cache. Cache won't refresh without a version bump. Bump now, or continue anyway?"*
+**If any CRITICAL FLAG or finding exists in the publish set: STOP and prompt the user.** Options:
+- Address the flag (e.g. bump version, fix a broken cross-skill reference).
+- Add the affected skill to `exclude_skills` if it isn't ready.
+- Explicitly override ("continue anyway") — only for genuine judgement calls, not for version-bump oversights.
 
-If user chooses to bump: for each flagged skill, increment the version in the dev SKILL.md (suggest patch bump), re-read, and re-audit.
+If the user opts to bump a flagged skill, increment the version in the dev SKILL.md (suggest patch bump), re-read, and re-audit.
+
+**Skip-set WARNINGs never block.** Report them and move on — the user has already opted those skills out of this round.
 
 ---
 
@@ -182,20 +267,28 @@ For each dev skill:
    - `name:` field — replace `{dev_prefix}` with `{published_prefix}`
    - `description:` field — strip leading `[DEV] ` if present
    - `version:` field — strip trailing `-dev` (e.g. `3.0-dev` → `3.0`)
-   - **Body cross-skill references** — replace `{dev_prefix}{stem}` with `{published_prefix}{stem}` for all known dev skill names throughout the entire file (frontmatter + body). Build the replacement map from the full list of dev skills being published in this run. Use whole-word matching (e.g. match `alex-threshold-analysis` but not `alex-threshold-analysis-extra`) to avoid partial replacements. This ensures "Related Skills" sections and inline references point to the published names, not dev names.
+   - **Body cross-skill references** — replace `{dev_prefix}{stem}` with `{published_prefix}{stem}` for all known dev skill names throughout the entire file (frontmatter + body). Build the replacement map from the full list of dev skills being published in this run. Use whole-word matching (e.g. match `dev-threshold-analysis` but not `dev-threshold-analysis-extra`) to avoid partial replacements. This ensures "Related Skills" sections and inline references point to the published names, not dev names.
 
 ### 2B. Clean up stale skill folders (strict mirror at `{skills_dir}/`)
 
-After Step 2A, the repo's `{skills_dir}/` must contain **exactly** the set of published skills mapped from dev. Anything else gets removed.
+After Step 2A, the repo's `{skills_dir}/` must contain **exactly** the set of published skills mapped from the **Publish set** (Step 0.5). Everything else gets removed.
 
-**Expected set:** for every dev skill `{dev_prefix}{stem}` that was synced in Step 2A, the expected repo folder is `{published_prefix}{stem}`.
+**Expected set:** for every dev skill in the Publish set (`{dev_prefix}{stem}`), the expected repo folder is `{published_prefix}{stem}`.
 
-**Cleanup:**
+**Cleanup (three tiers, different friction):**
+
 1. Glob `{repo_path}/{skills_dir}/*/` → actual set of skill folders.
-2. For each folder not in the expected set:
-   - If the name starts with `{dev_prefix}` (leftover raw dev copy) → `git rm -rf` silently.
-   - Otherwise → report and ask the user: *"`{repo}/{skills_dir}/{folder}/` is not sourced from any dev skill. Delete it? (Model A strict mirror deletes by default; answer `keep` to override just this time — but consider whether this skill should be moved into dev.)"*
-3. On user confirm (or auto for `{dev_prefix}` leftovers): `git -C {repo_path} rm -rf {skills_dir}/{folder}`.
+2. Categorize each folder not in the expected set:
+
+   | Category | Detection | Action |
+   |---|---|---|
+   | **Excluded skill in repo** | folder is `{published_prefix}{stem}` where `{dev_prefix}{stem}` is in `exclude_skills` | `git rm -rf` silently. Announce in the run summary: *"Removed alex-{stem} from repo (now in exclude_skills)."* |
+   | **Dev-prefix leftover** | folder starts with `{dev_prefix}` (a raw dev copy that shouldn't be there) | `git rm -rf` silently. |
+   | **Unknown folder** | not matched by either of the above | Report and ask: *"`{repo}/{skills_dir}/{folder}/` is not sourced from any dev skill and is not on the exclusion list. Delete it? (Model A strict mirror deletes by default; answer `keep` to override just this time — but consider whether this skill should be moved into dev or added to `exclude_skills`.)"* |
+
+3. Execute deletions via `git -C {repo_path} rm -rf {skills_dir}/{folder}`.
+
+**Exclusion-driven deletion is the key new behavior:** adding a skill to `exclude_skills` is the official way to retire it from publication. The first run after the addition deletes the corresponding `{published_prefix}{stem}/` folder from the repo and removes its entry from `marketplace.json` (Step 2D's full-rewrite handles the manifest side automatically).
 
 Also remove any stale entries from `marketplace.json` that reference the deleted paths (Step 2D handles this as part of its full rewrite).
 
@@ -398,9 +491,11 @@ After push succeeds:
 GitHub Update — YYYY-MM-DD HH:MM
 
 Plugin version: X.Y.Z → X.Y.Z
-  Updated: {published_prefix}skill-a (1.0 → 3.0)
-  Added:   {published_prefix}skill-b (2.0), {published_prefix}skill-c (1.0)
-  Skipped: N (no changes), M (excluded)
+  Updated:   {published_prefix}skill-a (1.0 → 3.0)
+  Added:     {published_prefix}skill-b (2.0), {published_prefix}skill-c (1.0)
+  Unchanged: N skills (no diff since cache)
+  Removed:   {published_prefix}old-skill (newly excluded this round)
+  Excluded:  M dev skills skipped (W warnings reported, not acted on)
 Pushed: main @ abc1234
 Cache: updated X.Y.Z → A.B.C on disk · restart Claude Code to load into session
 ```
@@ -412,7 +507,8 @@ Cache: updated X.Y.Z → A.B.C on disk · restart Claude Code to load into sessi
 - Plugin version: X.Y.Z → X.Y.Z
 - Updated: {published_prefix}skill-a (1.0 → 3.0)
 - Added: {published_prefix}skill-b (2.0)
-- Skipped: N unchanged, M excluded
+- Removed from repo (now excluded): {published_prefix}old-skill
+- Skipped: N unchanged, M excluded (W skip-set warnings, no action taken)
 - Pushed: main @ abc1234
 - Cache: `claude plugin update` ran, cache @ vX.Y.Z · restart required
 ```
@@ -426,7 +522,10 @@ Create the log file if it doesn't exist. Append-only — never truncate.
 - Do not modify dev SKILL.md files except for version bumps the user explicitly approves.
 - Do not push without explicit user confirmation.
 - Do not overwrite `alex_github_update_config.md` after first creation.
-- Do not publish skills listed in `exclude_skills`.
+- Do not auto-edit `exclude_skills` — changes to that list are the user's call and must be made by hand. If the preview (Step 0.5) doesn't match the user's intent, abort and tell them to edit the config.
+- Do not publish skills listed in `exclude_skills`. If one is already present in the repo, delete it silently as part of Step 2B's strict-mirror cleanup (announce in the run summary).
+- Do not skip Step 0.5's confirmation prompt, even on "obvious" runs. The preview is the gate that prevents surprises like silently publishing a half-done skill or silently deleting a repo folder the user forgot was published.
+- Do not block the run on skip-set audit findings. Skip-set issues are WARNINGS by design — the user has already told you those skills are deferred.
 - Do not modify the skill body content during sync — only transform frontmatter fields (name, description prefix, version suffix).
 - Do not delete entries on the allowlist: `.claude-plugin/`, `.git/`, `.gitignore`. Everything else in the repo must be either sourced from dev (and thus gets overwritten/synced) or deleted per Model A strict mirror.
 - Do not hardcode user-specific values (paths, repo names, prefixes) in this skill file. All user-specific values come from the config.
