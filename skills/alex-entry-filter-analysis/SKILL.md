@@ -1,10 +1,22 @@
 ---
 name: alex-entry-filter-analysis
-description: "One-shot orchestrator for entry-filter analysis on a block. Runs build-data \u2192 threshold-sweep \u2192 heatmap \u2192 threshold-analysis (for filters flagged in the groups CSV's \"Threshold Analysis Default Report\" column), then reads the result CSVs + correlations + groups metadata + a local preferences file to produce a baseline-anchored summary and a filter shortlist (\u22642 per Entry Group) ready to feed to alex-create-datelist. Analysis is grounded in the generated reports; out-of-context insights surface as explicit gap warnings. Default metric AvgROR; AvgPCR only on explicit user request (and PCR output is exploratory \u2014 see README limitations). Cross-session learning via alex_entry_filter_analysis_preferences.md at TB root."
-compatibility: Orchestrator only. No Python. Depends on four upstream entry-filter dev skills.
+description: >
+  One-shot orchestrator for entry-filter analysis on a block. Runs
+  build-data → threshold-sweep → heatmap → threshold-analysis (for filters
+  flagged in the groups CSV's "Threshold Analysis Default Report" column),
+  then reads the result CSVs + correlations + groups metadata + a local
+  preferences file to produce a baseline-anchored summary and a filter
+  shortlist (≤2 per Entry Group) ready to feed to alex-create-datelist.
+  Analysis is grounded in the generated reports; out-of-context insights
+  surface as explicit gap warnings. Default metric AvgROR; AvgPCR only on
+  explicit user request (and PCR output is exploratory — see README
+  limitations). Cross-session learning via alex_entry_filter_analysis_preferences.md
+  at TB root.
+compatibility: Orchestrator only. No Python. Depends on four upstream
+  entry-filter dev skills.
 metadata:
   author: alex-tradeblocks
-  version: 1.2.1
+  version: "1.2.1"
 ---
 
 # Entry Filter Analysis

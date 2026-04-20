@@ -1,11 +1,25 @@
 ---
 name: alex-entry-filter-heatmap
-description: "Entry-filter retention heatmap for a block. Discovery Map (global, sorted by 80r% delta, includes Min/Max/Combo) + By Filter Group table (per-Entry-Group Min/Max/Combo restatement, cells color-only) + Binary & Categorical breakdown (clickable, In/Out side-by-side). Every data cell is click-to-capture \u2014 continuous threshold/combo expressions and binary/categorical In (==) / Out (!=) expressions all feed one selections panel, persisted in localStorage, copy-to-clipboard feeds alex-create-datelist. Reads THREE block-local CSVs and only these three: entry_filter_groups.*.csv (labels & organization), entry_filter_threshold_results.csv (continuous sweep data + block baselines), entry_filter_categorical_results.csv (binary + categorical In/Out stats). Does NOT read entry_filter_data.csv \u2014 every number it shows is pre-computed by alex-entry-filter-threshold-sweep. Defaults: AvgROR metric, max_avg variant, Report Heatmap column for filter inclusion. All three overridable via\
-  \ --sweep-metric, --sweep-variant, --heatmap-col."
+description: >
+  Entry-filter retention heatmap for a block. Discovery Map (global,
+  sorted by 80r% delta, includes Min/Max/Combo) + By Filter Group table
+  (per-Entry-Group Min/Max/Combo restatement, cells color-only) + Binary &
+  Categorical breakdown (clickable, In/Out side-by-side). Every data cell is
+  click-to-capture — continuous threshold/combo expressions and
+  binary/categorical In (==) / Out (!=) expressions all feed one selections
+  panel, persisted in localStorage, copy-to-clipboard feeds
+  alex-create-datelist. Reads THREE block-local CSVs and only these three:
+  entry_filter_groups.*.csv (labels & organization),
+  entry_filter_threshold_results.csv (continuous sweep data + block baselines),
+  entry_filter_categorical_results.csv (binary + categorical In/Out stats).
+  Does NOT read entry_filter_data.csv — every number it shows is pre-computed
+  by alex-entry-filter-threshold-sweep. Defaults: AvgROR metric, max_avg
+  variant, Report Heatmap column for filter inclusion. All three overridable
+  via --sweep-metric, --sweep-variant, --heatmap-col.
 compatibility: Requires Python 3 standard library only. No MCP, no DuckDB, no network, no numpy.
 metadata:
   author: alex-tradeblocks
-  version: 5.0.1
+  version: "5.0.1"
 ---
 
 # Entry Filter Heatmap

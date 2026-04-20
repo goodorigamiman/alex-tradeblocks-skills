@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-alex-entry-filter-threshold-analysis — CLI driver.
+dev-entry-filter-threshold-analysis — CLI driver.
 
 Generates an interactive threshold-analysis HTML report for a single entry filter
 on a block. Reads only two block-local CSVs; never builds data itself.
@@ -450,15 +450,15 @@ th:first-child,td:first-child{{text-align:left}}
 
 <h3>Efficiency Frontier</h3>
 <div class="chart-controls" style="display:flex;align-items:center;gap:10px;margin:4px 0 10px;font-size:0.85em;color:#aaa;flex-wrap:wrap">
-  <label for="effXLow">Min retention:</label>
-  <input id="effXLow" type="number" step="5"
-         style="width:80px;background:#16213e;color:#fff;border:1px solid #0f3460;border-radius:4px;padding:4px 6px;font-family:inherit">
-  <span>%</span>
   <label for="effXHigh">Max retention:</label>
   <input id="effXHigh" type="number" step="5"
          style="width:80px;background:#16213e;color:#fff;border:1px solid #0f3460;border-radius:4px;padding:4px 6px;font-family:inherit">
   <span>%</span>
-  <span style="color:#666;font-size:0.9em">&nbsp;— Y auto-refits. Defaults: min 0%, max = highest retention observed.</span>
+  <label for="effXLow">Min retention:</label>
+  <input id="effXLow" type="number" step="5"
+         style="width:80px;background:#16213e;color:#fff;border:1px solid #0f3460;border-radius:4px;padding:4px 6px;font-family:inherit">
+  <span>%</span>
+  <span style="color:#666;font-size:0.9em">&nbsp;— Y auto-refits. Defaults: max = highest retention observed, min 20%.</span>
 </div>
 <div class="chart-wrap"><canvas id="effChart"></canvas></div>
 
@@ -930,7 +930,7 @@ function effYBounds(xMin, xMax) {{
 // Default X bounds for the efficiency frontier (user-adjustable via inputs).
 // Low defaults to 0 (no losing combos below). High defaults to the data-driven
 // ceiling so any above-baseline subset is visible.
-const EFF_X_LOW_DEFAULT = 0;
+const EFF_X_LOW_DEFAULT = 20;
 const EFF_X_HIGH_DEFAULT = effXMax;
 const initEffY = effYBounds(EFF_X_LOW_DEFAULT, EFF_X_HIGH_DEFAULT);
 

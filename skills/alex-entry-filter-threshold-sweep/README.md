@@ -200,7 +200,7 @@ Two reasons:
 
 No. Filters with >10% null values in the data column are skipped by the sweep (reported in the console as "skipped (column not in data)" or "skipped (>10% nulls)"). Reason: sparsely-populated filters give biased retention numbers because the baseline is computed across all trades but the retention subset can only be computed across non-null trades.
 
-If you need such a filter, either fix the data pipeline (via `alex-entry-filter-build-data`) so the column is fully populated, or accept that the filter is out of scope for this analysis.
+If you need such a filter, either fix the data pipeline (via `dev-entry-filter-build-data`) so the column is fully populated, or accept that the filter is out of scope for this analysis.
 
 ---
 
@@ -208,7 +208,7 @@ If you need such a filter, either fix the data pipeline (via `alex-entry-filter-
 
 ### Heatmap (currently live)
 
-`alex-entry-filter-heatmap` reads the sweep CSV, filters to one (metric, variant) pair — default `(AvgROR, tightest)` — and renders:
+`dev-entry-filter-heatmap` reads the sweep CSV, filters to one (metric, variant) pair — default `(AvgROR, tightest)` — and renders:
 - Discovery Map (Min/Max cells per filter × retention target).
 - Retention Detail (Min/Max/Combo with cell values).
 - Binary/Categorical breakdown (computed directly, not from sweep CSV).
@@ -233,7 +233,7 @@ Open the CSV in Excel. Sort by `max_net_ror` descending to find filters that mos
 
 ### Threshold-analysis skill (doesn't read the sweep CSV)
 
-The single-filter interactive `alex-entry-filter-threshold-analysis` intentionally recomputes client-side in JavaScript — so the user can zoom the X axis, adjust bounds, etc. without requiring a round-trip. The sweep CSV is not a substitute for that skill's interactive drill-down.
+The single-filter interactive `dev-entry-filter-threshold-analysis` intentionally recomputes client-side in JavaScript — so the user can zoom the X axis, adjust bounds, etc. without requiring a round-trip. The sweep CSV is not a substitute for that skill's interactive drill-down.
 
 ---
 
@@ -251,7 +251,7 @@ The single-filter interactive `alex-entry-filter-threshold-analysis` intentional
 ## File layout inside the skill folder
 
 ```
-alex-entry-filter-threshold-sweep/
+dev-entry-filter-threshold-sweep/
 ├── SKILL.md     ← CLI reference, exit codes, schema table (the "what")
 ├── README.md    ← this file (the "why")
 └── gen_sweep.py ← the Python driver

@@ -1,10 +1,17 @@
 ---
 name: alex-entry-filter-threshold-analysis
-description: "Threshold analysis for a single entry filter on a block. Sweeps the filter across its unique values, computes retention references (99% through 50% of baseline Net ROR), and renders an interactive HTML chart with efficiency frontier, scatter, and OO filter translation. Reads only two block-local CSVs: entry_filter_data.csv and entry_filter_groups.*.csv. Never builds data \u2014 defers to alex-entry-filter-build-data. Filter labeling, ordering, and filter list all come from the groups CSV so the user can customize per-block by editing their local copy."
+description: >
+  Threshold analysis for a single entry filter on a block. Sweeps the filter
+  across its unique values, computes retention references (99% through 50% of baseline
+  Net ROR), and renders an interactive HTML chart with efficiency frontier, scatter,
+  and OO filter translation. Reads only two block-local CSVs: entry_filter_data.csv
+  and entry_filter_groups.*.csv. Never builds data — defers to alex-entry-filter-build-data.
+  Filter labeling, ordering, and filter list all come from the groups CSV so the user
+  can customize per-block by editing their local copy.
 compatibility: Requires Python 3 with numpy. No MCP. No DuckDB. No network.
 metadata:
   author: alex-tradeblocks
-  version: 4.0.2
+  version: "4.0.3"
 ---
 
 # Entry Filter Threshold Analysis
@@ -149,8 +156,8 @@ Each chart exposes a **pair** of number inputs (Low and High) rendered directly 
 **Defaults (set by JS from actual chart-init bounds — single source of truth, not duplicated in HTML value attributes):**
 - Scatter/threshold X Low = `min(filter_values)` (the data min)
 - Scatter/threshold X High = `max(filter_values)` (the data max)
-- EF X Low = **0** (no losing combos)
-- EF X High = `max(105%, data_max + 5)` (the data-driven ceiling)
+- EF X High = `max(105%, data_max + 5)` (the data-driven ceiling) — listed first to match the axis direction (X is `reverse: true`, high on the left)
+- EF X Low = **20** (cuts off the noisy near-empty-set tail; chart still scans full range when the user widens it)
 
 **Y axis behavior is uniform** across all three charts. Each chart has its own bounds function (`scatterYBounds`, `threshYBounds`, `effYBounds`) that share a common `yBoundsFormula(ys)` producing `{ min: min(0, min(visibleY)) - 2, max: max(visibleY) + 2 }`. Zero is always included as a floor so the baseline reference is visible. When the X window narrows, the Y axis auto-zooms — so the chart never wastes vertical space on off-screen extremes. Update is `chart.update('none')` (no animation, instant redraw).
 - **Title uses Title Case.** The `<title>` and `<h1>` both read `Entry Filter Threshold Analysis - <Short Name>` (e.g., `Entry Filter Threshold Analysis - SLR`). The underlying filename on disk still uses the lowercase-plus-brackets form (`entry filter threshold analysis [SLR].html`) for tidy sorting, but the in-report display is capitalized for readability.

@@ -1,10 +1,10 @@
 ---
 name: alex-tradeblocks-startup
 description: TradeBlocks startup check. Verifies MCP server, market data provider, skills (published + local dev), and DuckDB databases. Auto-starts services if down. Reads `alex_tradeblocks_startup_config.md` in the TradeBlocks Data root for user-specific paths and settings; on first run, discovers values and writes the config. Use at session start or when TradeBlocks tooling feels broken.
-compatibility: "Requires Docker. Market data provider (ThetaData, Massive, or other) and dev workspace layout are discovered from the local config \u2014 no assumptions baked in."
+compatibility: Requires Docker. Market data provider (ThetaData, Massive, or other) and dev workspace layout are discovered from the local config — no assumptions baked in.
 metadata:
   author: alex-tradeblocks
-  version: 4.2.1
+  version: "4.2.2"
 ---
 
 # Dev TradeBlocks Startup
@@ -311,9 +311,9 @@ Otherwise, do two things:
    - No cache match → **DEV-ONLY** (not yet published)
    - Dev version < cache version → **REGRESSION** (flag loudly)
    - Dev version == cache version, content unchanged → **OK (synced)**
-   - Dev version == cache version, content changed → **UNPUBLISHED CHANGES** (dev has edits that won't reach the cache without a version bump — flag and suggest running `alex-github-update`)
+   - Dev version == cache version, content changed → **UNPUBLISHED CHANGES** (dev has edits that won't reach the cache without a version bump — flag and suggest running `dev-github-update`)
 
-   Content comparison: compare SKILL.md body (after frontmatter) between dev and the repo copy at `{repo_path}/skills/{published_prefix}{stem}/SKILL.md`. Ignore expected frontmatter transforms (prefix, [DEV] tag, -dev suffix). Also compare any `.py`/`.sql` files in the dev folder to their repo counterparts.
+   Content comparison: compare SKILL.md body (after frontmatter) between dev and the repo copy at `{repo_path}/skills/{published_prefix}{stem}/SKILL.md`. Ignore expected frontmatter transforms (prefix, tag, -dev suffix). Also compare any `.py`/`.sql` files in the dev folder to their repo counterparts.
 
 **(ii) Dev Skills Registry — write into project `CLAUDE.md`** (persists across sessions):
 
@@ -340,7 +340,7 @@ Skills under active development in `{dev_skills_folder}/`. Read the full `SKILL.
 
 | Skill | Version | Purpose |
 |---|---|---|
-| alex-entry-filter-pareto | 3.0-dev | [one-line description, ≤160 chars] |
+| dev-entry-filter-pareto | 3.0-dev | [one-line description, ≤160 chars] |
 | ... | ... | ... |
 
 Paths: `{tb_root}/{dev_skills_folder}/<skill-name>/SKILL.md`
@@ -644,7 +644,7 @@ schema_version: 1
 
 # Paths
 tb_root: /path/to/TradeBlocks Data
-dev_skills_folder: Dev-TradeBlocks-Skills  # relative to tb_root, or absolute, or "none"
+dev_skills_folder: <your-dev-folder-or-none>  # name relative to tb_root (maintainers), absolute path, or "none" (pulled-only users)
 
 # Market data provider
 market_provider: thetadata                   # thetadata | massive | polygon | other

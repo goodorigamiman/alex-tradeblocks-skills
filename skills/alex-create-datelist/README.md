@@ -1,4 +1,4 @@
-# alex-create-datelist
+# dev-create-datelist
 
 Generate Option Omega-compatible datelists (ISO `YYYY-MM-DD`, comma-wrapped) from the entry-filter data of a block. The skill takes one or more filter expressions and emits **two** copy-paste-ready code blocks:
 
@@ -78,10 +78,10 @@ The first row is always **All Trades (baseline)** so every other row reads as "w
 
 ## Related skills
 
-- `alex-entry-filter-analysis` — orchestrator that runs the full pipeline and typically invokes this skill as its final step. Use when you want a recommended filter list built for you.
-- `alex-entry-filter-threshold-analysis` — find the optimal threshold for a single filter before generating a datelist.
-- `alex-entry-filter-heatmap` — click cells to capture candidate filter expressions, then hand those expressions to this skill.
-- `alex-entry-filter-build-data` — upstream. Produces the `entry_filter_data.csv` this skill reads.
+- `dev-entry-filter-analysis` — orchestrator that runs the full pipeline and typically invokes this skill as its final step. Use when you want a recommended filter list built for you.
+- `dev-entry-filter-threshold-analysis` — find the optimal threshold for a single filter before generating a datelist.
+- `dev-entry-filter-heatmap` — click cells to capture candidate filter expressions, then hand those expressions to this skill.
+- `dev-entry-filter-build-data` — upstream. Produces the `entry_filter_data.csv` this skill reads.
 
 ## What NOT to do
 

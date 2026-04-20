@@ -1,10 +1,19 @@
 ---
 name: alex-entry-filter-threshold-sweep
-description: "Pre-computes sweep results for every continuous AND categorical entry filter on a block. Writes TWO sibling CSVs next to entry_filter_data.csv: entry_filter_threshold_results.csv (continuous \u2014 wide retention-target grid with tightest/max_avg variants across AvgROR/AvgPCR \xD7 low/high/combo direction) and entry_filter_categorical_results.csv (categorical \u2014 one row per category \xD7 metric, columns in_sample and out_sample for inclusion vs exclusion impact). Downstream skills (heatmap, pareto, future consumers) read these CSVs instead of recomputing. Reads only two block-local CSVs; never builds data itself. Defers upstream to alex-entry-filter-build-data."
+description: >
+  Pre-computes sweep results for every continuous AND categorical entry
+  filter on a block. Writes TWO sibling CSVs next to entry_filter_data.csv:
+  entry_filter_threshold_results.csv (continuous — wide retention-target grid
+  with tightest/max_avg variants across AvgROR/AvgPCR × low/high/combo
+  direction) and entry_filter_categorical_results.csv (categorical — one row
+  per category × metric, columns in_sample and out_sample for inclusion vs
+  exclusion impact). Downstream skills (heatmap, pareto, future consumers)
+  read these CSVs instead of recomputing. Reads only two block-local CSVs;
+  never builds data itself. Defers upstream to alex-entry-filter-build-data.
 compatibility: Python 3 standard library only. No MCP, no DuckDB, no numpy.
 metadata:
   author: alex-tradeblocks
-  version: 1.2.2
+  version: "1.2.2"
 ---
 
 # Entry Filter Threshold Sweep
