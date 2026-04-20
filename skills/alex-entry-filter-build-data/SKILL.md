@@ -1,18 +1,12 @@
 ---
 name: alex-entry-filter-build-data
-description: >
-  Build the shared entry_filter_data.csv for a block. Reads the filter groups
-  registry (block-local override if present, else the shared default), pulls trade and
-  market data via the TradeBlocks data layer, computes per-trade 1-lot economics
-  (margin, premium, P/L, ROM%, PCR%), populates every filter column declared in the
-  groups CSV, and enriches with market holiday proximity. Writes to
-  {block}/alex-tradeblocks-ref/entry_filter_data.csv and reports which filter columns
-  were populated vs skipped. Shared CSV for heatmap, pareto, parallel coords, threshold,
-  and holiday enrichment skills.
+description: 'Build the shared entry_filter_data.csv for a block. Reads the filter groups registry (block-local override if present, else the shared default), pulls trade and market data via the TradeBlocks data layer, computes per-trade 1-lot economics (margin, premium, P/L, ROM%, PCR%), populates every filter column declared in the groups CSV, and enriches with market holiday proximity. Writes to {block}/alex-tradeblocks-ref/entry_filter_data.csv and reports which filter columns were populated vs skipped. Shared CSV for heatmap, pareto, parallel coords, threshold, and holiday enrichment skills.
+
+  '
 compatibility: Requires TradeBlocks MCP server with trade data and market data loaded. Python 3 with pandas and duckdb.
 metadata:
   author: alex-tradeblocks
-  version: "1.0.2"
+  version: 1.1.0
 ---
 
 # Build Entry Filter Data CSV
@@ -28,15 +22,32 @@ Centralize the Phase 1 pipeline that every entry filter skill needs. Historicall
   1. `trade_index` (int, 1-based, ordered by date_opened + time_opened)
   2. `date_opened` (date)
   3. `time_opened` (time)
-  4. `margin_per_contract` (float, 1-lot margin)
-  5. `premium_per_contract` (float, 1-lot premium)
-  6. `pl_per_contract` (float, 1-lot P/L)
+  4. `margin_per_contract` (float, 1-lot margin — i.e. per OO-contract, which equals 1 strategy lot; OO's "No. of Contracts" = number of lots)
+  5. `premium_per_contract` (float, per-lot net premium in price units. Notional/100. Signed: − debit paid, + credit received. Computed from legs as `sum(qty × signed_price) / num_contracts`; leg prices are summed with STO positive / BTO negative so the sign convention matches OO's `db`/`cr` labels)
+  6. `pl_per_contract` (float, 1-lot P/L in $)
   7. `rom_pct` (float, return on margin = pl / margin_req × 100)
-  8. `pcr_pct` (float, Premium Capture Rate = pl / (premium × num_contracts) × 100)
+  8. `pcr_pct` (float, Premium Capture Rate = `pl / abs(sum(qty × signed_price) × 100) × 100`. Uses `abs()` on denominator so debit and credit entries both produce positive denominators — sign of PCR then tracks sign of P/L directly)
+  9. `VIX_at_Entry` (float, VIX level at the trade's entry timestamp. Primary: `market.intraday` VIX bar `open` at `(date_opened, time_opened)` — available for dates ≥ 2024-09-03 only. Fallback: OO trade-log CSV VIX column if present — OO's default export has no VIX column, so this is blank for older trades unless the user adds a custom OO column)
+  10. `VIX_at_Close` (float, same logic as `VIX_at_Entry` but for `(date_closed, time_closed)`. For post-trade exit-attribution analysis, not an entry filter)
+  11. `Intra_Move_Pct` (float, same-day intraday price move from today's open to entry, as % of today's open. `(underlying_intraday_bar_open_at_entry − underlying_daily_open) / underlying_daily_open × 100`. Signed: + = underlying rallied from open, − = sold off. Primary: `market.intraday` bar of the block's underlying. Fallback: OO trade-log CSV `Movement` column (in points) divided by underlying daily open × 100 for scale consistency)
 - Filter columns: **names and inclusion come from the groups CSV**, not from this skill. Every row where `TB Filter = TRUE` and `CSV Column` is non-blank becomes a column.
 - Holiday columns (appended by this skill): `Days_to_Holiday`, `Weeks_to_Holiday`, `Days_from_Holiday`, `Weeks_from_Holiday`.
 
-**Side effect:** On first run for a block, copies the shared filter groups CSV to `{block}/alex-tradeblocks-ref/` preserving its filename (e.g., `entry_filter_groups.default.csv`). Subsequent runs prefer the block-local copy, letting the user customize filters per block without affecting other blocks.
+**Note on the `Entry Filter` column (groups CSV):** this skill writes every TB-Filter=TRUE column to `entry_filter_data.csv` regardless of the `Entry Filter` flag — the data file is a complete per-trade record of what the pipeline observed. The `Entry Filter` flag only affects downstream analysis scope: the threshold-sweep excludes `Entry Filter = FALSE` columns from the result CSVs so they don't pollute the heatmap / threshold-analysis / filter recommendations. Use `Entry Filter = FALSE` for columns you want to collect for correlation / audit purposes but never want surfaced as a candidate entry filter (e.g. `VIX_at_Close` is exit-time data and would be lookahead if treated as an entry signal).
+
+**Side effect:** On first run for a block, copies the shared filter groups CSV to `{block}/alex-tradeblocks-ref/` preserving its filename (e.g., `entry_filter_groups.default.csv`). Subsequent runs prefer the block-local copy, letting the user customize filters per block without affecting other blocks. **When the shared default is updated** (e.g. new columns added), existing blocks keep their older block-local copy — delete `{block}/alex-tradeblocks-ref/entry_filter_groups.default.csv` to pick up the new shared default on next run. New columns in `entry_filter_data.csv` (like VIX_at_Entry) are always populated regardless of the groups CSV — they're locked base columns.
+
+### Per-trade trade-context lookup (VIX_at_Entry / VIX_at_Close / Intra_Move_Pct)
+
+These three columns follow a **primary → fallback → blank** resolution:
+
+1. **Primary — TB `market.intraday`:** the skill left-joins the VIX bar and the block's underlying bar at each trade's entry/close timestamp. Matches when the `time` field of the 15-min bar equals the trade's `time_opened` / `time_closed` (seconds stripped to match the `HH:MM` bar labeling). For a 15:45 entry this lands on the 15:45 bar's `open` — the price **at** the timestamp, not the bar's close (which would be ~15:59:59).
+2. **Fallback — OO trade-log CSV:** if the primary returns NaN, the skill looks for an OO CSV in the block folder (any `*.csv` whose header contains `Date Opened` + `Time Opened` + `Legs`). For VIX, it tries custom column names `VIX at Entry`, `VIX Entry`, `Opening VIX`, `VIX` (entry side) and `VIX at Close`, `VIX Close`, `Closing VIX`, `VIX at Exit` (close side); if none exist, the field stays blank. For Intra_Move_Pct, it uses the `Movement` column (OO's default export has this in points) and converts to percentage using the underlying's daily open.
+3. **Missing:** if both primary and fallback fail, the column is blank for that trade. The build summary's `Trade-context coverage` section reports exactly how many trades came from each source and flags the fallback scenarios as warnings.
+
+**Why this design:** `market.intraday` VIX data only starts 2024-09-03 for the current TB install (ThetaData history), so pre-2024-09 trades need a fallback. The OO trade log is the authoritative record of what OO saw at entry, so reading it directly avoids reconstructing OO's VIX/Movement values from lagged market data. When the OO CSV has no VIX column (the default 25-column export case), blanks are explicit rather than silently proxied.
+
+**When this matters:** filter analyses that depend on entry-time VIX (e.g. "does the strategy pay better when VIX >= 25 at entry?") require `VIX_at_Entry`, not the misleading `VIX_Trade` field (which is actually prior-day VIX open and doesn't match OO's per-trade VIX reading). `Intra_Move_Pct` is the scale-consistent percentage version of OO's `Movement` entry filter — use it alongside `Gap_Pct` to separate the same-day intraday drift signal from the overnight gap signal.
 
 ## When to invoke
 
@@ -86,6 +97,8 @@ The script:
    **Sources** — full paths (relative to TB root) to the block, the groups CSV (with source tag `explicit` | `block-local` | `copied-from-shared`), the holidays CSV, and the output CSV. Full provenance in one place.
 
    **Build stats** — trade count, base column count, filter columns populated vs skipped, holiday columns, total columns.
+
+   **Trade-context coverage** — one line each for `VIX_at_Entry`, `VIX_at_Close`, `Intra_Move_Pct` reporting how many trades were populated from TB intraday vs OO CSV fallback vs left blank. When any fallback or missing trades exist, adds a summary line identifying which OO CSV columns were recognized and used (or warns if no OO CSV was found / no usable columns). When every trade is TB-native, prints `(all trades covered by TB intraday — no fallback needed)`.
 
    **Skipped filters** — one line per filter that was requested in the groups CSV but couldn't be populated, with the specific reason (missing DB column, >10% nulls, intraday source out of scope, etc.). Explicit "(none)" when everything populated successfully.
 

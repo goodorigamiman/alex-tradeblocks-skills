@@ -1,19 +1,12 @@
 ---
 name: alex-entry-filter-threshold-sweep
-description: >
-  Pre-computes sweep results for every continuous AND categorical entry
-  filter on a block. Writes TWO sibling CSVs next to entry_filter_data.csv:
-  entry_filter_threshold_results.csv (continuous — wide retention-target grid
-  with tightest/max_avg variants across AvgROR/AvgPCR × low/high/combo
-  direction) and entry_filter_categorical_results.csv (categorical — one row
-  per category × metric, columns in_sample and out_sample for inclusion vs
-  exclusion impact). Downstream skills (heatmap, pareto, future consumers)
-  read these CSVs instead of recomputing. Reads only two block-local CSVs;
-  never builds data itself. Defers upstream to alex-entry-filter-build-data.
+description: 'Pre-computes sweep results for every continuous AND categorical entry filter on a block. Writes TWO sibling CSVs next to entry_filter_data.csv: entry_filter_threshold_results.csv (continuous — wide retention-target grid with tightest/max_avg variants across AvgROR/AvgPCR × low/high/combo direction) and entry_filter_categorical_results.csv (categorical — one row per category × metric, columns in_sample and out_sample for inclusion vs exclusion impact). Downstream skills (heatmap, pareto, future consumers) read these CSVs instead of recomputing. Reads only two block-local CSVs; never builds data itself. Defers upstream to alex-entry-filter-build-data.
+
+  '
 compatibility: Python 3 standard library only. No MCP, no DuckDB, no numpy.
 metadata:
   author: alex-tradeblocks
-  version: "1.2.2"
+  version: 1.3.0
 ---
 
 # Entry Filter Threshold Sweep
@@ -150,18 +143,22 @@ python3 "{skill_dir}/gen_sweep.py" \
 
 ## Filter scope
 
-**Continuous sweep** — rows where:
+**Gate 0 — `Entry Filter` column (applied first for both sweeps):** rows where `Entry Filter` equals `FALSE` are excluded from both continuous and categorical sweeps. This flag exists in the shared groups CSV for columns that are useful to collect in `entry_filter_data.csv` but are NOT valid entry signals — e.g. `VIX_at_Close` (exit-time data, lookahead risk). Missing/blank values default to `TRUE` so older groups CSVs without this column retain pre-change behavior. When rows are excluded, the sweep stdout prints a single line listing them.
+
+**Continuous sweep** — rows where (after Gate 0):
 1. `Filter Type` is `continuous`.
 2. `CSV Column` is non-blank and exists in `entry_filter_data.csv`.
 3. The data column has ≤ 10% nulls.
 
-**Categorical sweep** — rows where:
+**Categorical sweep** — rows where (after Gate 0):
 1. `Filter Type` is `categorical` OR `binary`.
 2. `CSV Column` is non-blank and exists in `entry_filter_data.csv`.
 
 (No null-threshold gate on categorical — NULLs are simply excluded from both in_sample and out_sample subsets. Binary filters are written as 2-category rows so downstream renderers can consume one file for all non-continuous filters.)
 
 `--filter-by` narrows further if supplied. Downstream skills subset by their own flags (`--heatmap-col "Report Heatmap"`, etc.) from the resulting rows.
+
+**Data collection vs analysis scope:** `entry_filter_data.csv` carries **every** column the groups CSV requests (including `Entry Filter = FALSE` ones) — this keeps the per-trade data file a complete record of what the pipeline observed. The sweep result CSVs carry only the analysis-scope rows. Downstream analysis skills (heatmap, threshold-analysis) read from the sweep CSVs, so the `FALSE` rows automatically stay out of filter recommendations and threshold reports.
 
 ## Algorithm
 

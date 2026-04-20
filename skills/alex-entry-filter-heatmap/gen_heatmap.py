@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dev-entry-filter-heatmap — CLI driver.
+alex-entry-filter-heatmap — CLI driver.
 
 Builds the entry-filter retention heatmap for a block. Reads only two block-local
 CSVs; never builds data itself.

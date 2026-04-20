@@ -1,22 +1,12 @@
 ---
 name: alex-entry-filter-analysis
-description: >
-  One-shot orchestrator for entry-filter analysis on a block. Runs
-  build-data → threshold-sweep → heatmap → threshold-analysis (for filters
-  flagged in the groups CSV's "Threshold Analysis Default Report" column),
-  then reads the result CSVs + correlations + groups metadata + a local
-  preferences file to produce a baseline-anchored summary and a filter
-  shortlist (≤2 per Entry Group) ready to feed to alex-create-datelist.
-  Analysis is grounded in the generated reports; out-of-context insights
-  surface as explicit gap warnings. Default metric AvgROR; AvgPCR only on
-  explicit user request (and PCR output is exploratory — see README
-  limitations). Cross-session learning via alex_entry_filter_analysis_preferences.md
-  at TB root.
-compatibility: Orchestrator only. No Python. Depends on four upstream
-  entry-filter dev skills.
+description: 'One-shot orchestrator for entry-filter analysis on a block. Runs build-data → threshold-sweep → heatmap → threshold-analysis (for filters flagged in the groups CSV''s "Threshold Analysis Default Report" column), then reads the result CSVs + correlations + groups metadata + a local preferences file to produce a baseline-anchored summary and a filter shortlist (≤2 per Entry Group) ready to feed to alex-create-datelist. Analysis is grounded in the generated reports; out-of-context insights surface as explicit gap warnings. Default metric AvgROR; AvgPCR only on explicit user request (and PCR output is exploratory — see README limitations). Cross-session learning via alex_entry_filter_analysis_preferences.md at TB root.
+
+  '
+compatibility: Orchestrator only. No Python. Depends on four upstream entry-filter dev skills.
 metadata:
   author: alex-tradeblocks
-  version: "1.2.1"
+  version: 1.2.1
 ---
 
 # Entry Filter Analysis
@@ -428,6 +418,7 @@ remove by hand-editing.
 - **Don't overwrite the preferences file.** Appends only. Hand-edit to remove or correct.
 - **Don't treat PCR output as production-grade.** The protocol is calibrated for ROR. See README limitations.
 - **Don't run DoW analysis on single-day strategies.** The DoW gate must fire first; skipping it wastes context and produces meaningless rows.
+- **Don't report a sum of `pl_per_contract` as a dollar total, and never without the word "sum".** `pl_per_contract` is a 1-lot-normalized per-trade P/L — summing it across trades produces a synthetic aggregate (what a hypothetical run-exactly-1-contract-per-trade version of the backtest would have made) that does NOT correspond to any real outcome. The actual backtest sized contracts dynamically, and under filtering the live sizing logic rebalances — so "sum of pl_per_contract for kept trades" has no mapping to dollars the user would actually earn. If you must surface the number (e.g. for a sanity check on Net ROR retention), label it explicitly as `sum(pl_per_contract) [1-lot-equivalent, NOT a real dollar total]` and always pair it with the retention ratio. Default: don't show it at all. Net ROR retention %, Avg ROR %, and WR from the sweep CSV are scale-invariant and already answer every question the user is asking. **Why:** surfaced 2026-04-20 when I reported "P/L per contract $124K / $132K / $152K" as a side-by-side comparison on the SlimP block — user correctly pushed back that scaling is arbitrary under filtering and the dollar framing implies a false equivalence to real trade outcomes.
 
 ## Related skills
 

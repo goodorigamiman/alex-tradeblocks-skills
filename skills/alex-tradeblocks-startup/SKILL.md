@@ -4,7 +4,7 @@ description: TradeBlocks startup check. Verifies MCP server, market data provide
 compatibility: Requires Docker. Market data provider (ThetaData, Massive, or other) and dev workspace layout are discovered from the local config — no assumptions baked in.
 metadata:
   author: alex-tradeblocks
-  version: "4.2.2"
+  version: 4.2.3
 ---
 
 # Dev TradeBlocks Startup
@@ -311,9 +311,9 @@ Otherwise, do two things:
    - No cache match → **DEV-ONLY** (not yet published)
    - Dev version < cache version → **REGRESSION** (flag loudly)
    - Dev version == cache version, content unchanged → **OK (synced)**
-   - Dev version == cache version, content changed → **UNPUBLISHED CHANGES** (dev has edits that won't reach the cache without a version bump — flag and suggest running `dev-github-update`)
+   - Dev version == cache version, content changed → **UNPUBLISHED CHANGES** (dev has edits that won't reach the cache without a version bump — flag and suggest running the local publish workflow)
 
-   Content comparison: compare SKILL.md body (after frontmatter) between dev and the repo copy at `{repo_path}/skills/{published_prefix}{stem}/SKILL.md`. Ignore expected frontmatter transforms (prefix, tag, -dev suffix). Also compare any `.py`/`.sql` files in the dev folder to their repo counterparts.
+   Content comparison: compare SKILL.md body (after frontmatter) between dev and the repo copy at `{repo_path}/skills/{published_prefix}{stem}/SKILL.md`. Ignore expected frontmatter transforms (prefix, [DEV] tag, -dev suffix). Also compare any `.py`/`.sql` files in the dev folder to their repo counterparts.
 
 **(ii) Dev Skills Registry — write into project `CLAUDE.md`** (persists across sessions):
 
@@ -340,7 +340,7 @@ Skills under active development in `{dev_skills_folder}/`. Read the full `SKILL.
 
 | Skill | Version | Purpose |
 |---|---|---|
-| dev-entry-filter-pareto | 3.0-dev | [one-line description, ≤160 chars] |
+| dev-example-skill | 1.0-dev | [one-line description, ≤160 chars] |
 | ... | ... | ... |
 
 Paths: `{tb_root}/{dev_skills_folder}/<skill-name>/SKILL.md`

@@ -1,14 +1,12 @@
 ---
 name: alex-normalize-statistics
-description: >
-  Normalize get_statistics results to per-contract terms. Runs the standard get_statistics MCP call,
-  augments with per-trade SQL dividing P&L and margin_req by num_contracts, aggregates avg/max/min margin
-  per contract, and leads the report with the return-on-margin implication. Flags wide margin ranges where
-  the average understates current capital requirements.
+description: 'Normalize get_statistics results to per-contract terms. Runs the standard get_statistics MCP call, augments with per-trade SQL dividing P&L and margin_req by num_contracts, aggregates avg/max/min margin per contract, and leads the report with the return-on-margin implication. Flags wide margin ranges where the average understates current capital requirements.
+
+  '
 compatibility: Requires TradeBlocks MCP server with trade data loaded. Block must have margin_req and num_contracts populated on trades.
 metadata:
   author: alex-tradeblocks
-  version: "1.0.2"
+  version: 1.0.2
 ---
 
 # alex-normalize-statistics

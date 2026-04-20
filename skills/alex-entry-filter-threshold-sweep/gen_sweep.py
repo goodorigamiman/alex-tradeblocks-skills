@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dev-entry-filter-threshold-sweep — CLI driver.
+alex-entry-filter-threshold-sweep — CLI driver.
 
 Pre-computes sweep results for every continuous AND categorical entry filter
 on a block, producing two sibling CSVs that downstream skills (heatmap, pareto,
@@ -644,6 +644,22 @@ def main() -> int:
     except RuntimeError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return EXIT_FILTER_BY_ERROR
+
+    # Apply the `Entry Filter` scope column — rows tagged FALSE are present in
+    # the shared groups registry for data-collection purposes (e.g. VIX_at_Close
+    # is useful context but NOT a valid entry signal due to lookahead) but must
+    # not pollute the sweep results. Missing/blank values default to TRUE so
+    # older groups CSVs without this column keep the pre-change behavior.
+    def _is_entry_filter(r: Dict) -> bool:
+        v = (r.get("Entry Filter") or "").strip().upper()
+        return v != "FALSE"  # default TRUE when blank/missing
+
+    non_entry_excluded = [r for r in scoped if not _is_entry_filter(r)]
+    scoped = [r for r in scoped if _is_entry_filter(r)]
+    if non_entry_excluded:
+        names = ", ".join(r.get("CSV Column","?") for r in non_entry_excluded)
+        print(f"Excluded from sweep (Entry Filter = FALSE): {len(non_entry_excluded)} "
+              f"filter(s) — {names}")
 
     # Filter to continuous rows with non-blank CSV Column.
     continuous = [

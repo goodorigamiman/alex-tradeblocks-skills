@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dev-entry-filter-build-data — build entry_filter_data.csv for a block.
+alex-entry-filter-build-data — build entry_filter_data.csv for a block.
 
 Reads the filter groups CSV to decide which columns to build, pulls trade +
 market data via read-only DuckDB, computes per-trade 1-lot economics, populates
@@ -31,10 +31,27 @@ import duckdb
 import pandas as pd
 
 
-TB_ROOT_DEFAULT = "/Users/alexanderhardt/Library/CloudStorage/OneDrive-AIACOTechnology/Documents - AIACO Trading Development/Pipeline Data/TradeBlocks Data"
 MIN_TRADES = 50
 MIN_COVERAGE_FRAC = 0.90
 MAX_NULL_FRAC = 0.10
+
+
+def default_tb_root() -> pathlib.Path:
+    """
+    Resolve TB root by walking up from the current working directory, looking
+    for a folder that contains `analytics.duckdb` and `market.duckdb`. Falls
+    back to the cwd itself if neither ancestor nor cwd match — the downstream
+    sufficiency check will then surface the mismatch clearly.
+
+    This lets the skill be invoked from anywhere inside the TB project without
+    a hardcoded absolute path (which was brittle and broke on fresh-pull users'
+    machines). Users can still override with --tb-root.
+    """
+    cwd = pathlib.Path.cwd().resolve()
+    for candidate in (cwd, *cwd.parents):
+        if (candidate / "analytics.duckdb").exists() and (candidate / "market.duckdb").exists():
+            return candidate
+    return cwd
 
 
 # ── Path resolution ──────────────────────────────────────────────────────────
@@ -231,21 +248,323 @@ def build_base_frame(con, block_id: str) -> pd.DataFrame:
             date_opened,
             time_opened,
             CAST(margin_req AS DOUBLE) / NULLIF(num_contracts, 0) AS margin_per_contract,
-            CAST(premium AS DOUBLE) / NULLIF(num_contracts, 0) AS premium_per_contract,
+            -- Per-lot premium in price units (notional/100). Sign: (-) debit, (+) credit.
+            -- Structure-agnostic unnest: splits legs on '|', parses each leg's qty and
+            -- price, sums (qty × price) with STO positive (credit received) and BTO
+            -- negative (debit paid), divides by num_contracts.
+            -- Note: num_contracts in OO is actually # of LOTS for ratio spreads
+            -- (e.g. SlimP 10/9 → 1 lot = 38 individual contracts). The column name
+            -- premium_per_contract is historic — it's really premium_per_lot.
+            -- Does NOT use OO's Premium column (which the MCP preserves as $ per lot);
+            -- computed from legs so the value is independent of CSV rounding/fees.
+            -- For 2022-05-16 SlimP: verified -273.40 per lot (matches OO Premium/100).
+            CAST(list_sum(
+              list_transform(
+                string_split(legs, '|'),
+                leg -> CASE
+                  WHEN regexp_matches(trim(leg), ' STO ')
+                  THEN CAST(regexp_extract(trim(leg), '^(\d+)', 1) AS DOUBLE) *
+                       CAST(regexp_extract(trim(leg), '([0-9.]+)$', 1) AS DOUBLE)
+                  WHEN regexp_matches(trim(leg), ' BTO ')
+                  THEN -1 * CAST(regexp_extract(trim(leg), '^(\d+)', 1) AS DOUBLE) *
+                            CAST(regexp_extract(trim(leg), '([0-9.]+)$', 1) AS DOUBLE)
+                  ELSE 0 END
+              )
+            ) AS DOUBLE) / NULLIF(num_contracts, 0) AS premium_per_contract,
             CAST(pl AS DOUBLE) / NULLIF(num_contracts, 0) AS pl_per_contract,
             CAST(pl AS DOUBLE) / NULLIF(margin_req, 0) * 100 AS rom_pct,
-            CASE
-                WHEN premium = 0 OR premium IS NULL OR num_contracts = 0 THEN NULL
-                ELSE CAST(pl AS DOUBLE) / (CAST(premium AS DOUBLE) * num_contracts) * 100
-            END AS pcr_pct,
-            -- Internal, renamed later if SLR is requested in groups CSV
-            (CAST(regexp_extract(legs, 'P STO ([0-9.]+)', 1) AS DOUBLE) +
-             CAST(regexp_extract(legs, 'C STO ([0-9.]+)', 1) AS DOUBLE)) / NULLIF(
-             CAST(regexp_extract(legs, 'P BTO ([0-9.]+)', 1) AS DOUBLE) +
-             CAST(regexp_extract(legs, 'C BTO ([0-9.]+)', 1) AS DOUBLE), 0) AS _slr_computed
+            -- PCR (Premium Capture Rate): what % of at-risk premium the trade captured.
+            -- User spec: pcr_pct = (1-lot P/L $) / abs(premium_per_lot_priceunits × 100) × 100
+            -- where premium_per_lot_priceunits is the legs-derived signed per-lot premium.
+            -- Uses abs() in the denominator so credit (+) and debit (-) trades both produce
+            -- denominators that are positive — PCR sign then tracks P/L sign directly
+            -- (positive PCR = winning trade, regardless of debit vs credit entry).
+            -- Algebraic simplification (num_contracts and ×100 both cancel):
+            --   pcr_pct = pl / abs(sum(qty × signed_price across all legs))
+            -- Computed from legs, not OO's Premium column — independent of CSV rounding.
+            -- For 2022-05-16 SlimP: 9483.52 / abs(-4374.40) = 2.168% (winner, debit entry).
+            CAST(pl AS DOUBLE) / NULLIF(ABS(
+              list_sum(list_transform(string_split(legs, '|'),
+                leg -> CASE
+                  WHEN regexp_matches(trim(leg), ' STO ')
+                  THEN CAST(regexp_extract(trim(leg), '^(\d+)', 1) AS DOUBLE) *
+                       CAST(regexp_extract(trim(leg), '([0-9.]+)$', 1) AS DOUBLE)
+                  WHEN regexp_matches(trim(leg), ' BTO ')
+                  THEN -1 * CAST(regexp_extract(trim(leg), '^(\d+)', 1) AS DOUBLE) *
+                            CAST(regexp_extract(trim(leg), '([0-9.]+)$', 1) AS DOUBLE)
+                  ELSE 0 END
+              ))
+            ), 0) AS pcr_pct,
+            -- Internal, renamed later if SLR is requested in groups CSV.
+            -- Structure-agnostic: splits the legs string on '|', parses each leg's
+            -- qty and price, sums (qty * price) separately for STO and BTO legs,
+            -- then takes the ratio. Works for any combination of 1-8+ legs with any
+            -- quantities. Verified against OO export for 4-leg DC equal qty (0.7619),
+            -- 4-leg SlimP 10/9 ratio (0.6778), 2-leg verticals, 6-leg asymmetric,
+            -- 8-leg double calendar, and 1-leg naked structures.
+            CAST(list_sum(
+              list_transform(
+                string_split(legs, '|'),
+                leg -> CASE
+                  WHEN regexp_matches(trim(leg), ' STO ')
+                  THEN CAST(regexp_extract(trim(leg), '^(\d+)', 1) AS DOUBLE) *
+                       CAST(regexp_extract(trim(leg), '([0-9.]+)$', 1) AS DOUBLE)
+                  ELSE 0 END
+              )
+            ) AS DOUBLE) / NULLIF(
+            CAST(list_sum(
+              list_transform(
+                string_split(legs, '|'),
+                leg -> CASE
+                  WHEN regexp_matches(trim(leg), ' BTO ')
+                  THEN CAST(regexp_extract(trim(leg), '^(\d+)', 1) AS DOUBLE) *
+                       CAST(regexp_extract(trim(leg), '([0-9.]+)$', 1) AS DOUBLE)
+                  ELSE 0 END
+              )
+            ) AS DOUBLE), 0) AS _slr_computed
         FROM t
         ORDER BY trade_index
     """, [block_id]).df()
+
+
+# ── Intraday + OO CSV fallback for VIX_at_Entry / VIX_at_Close / Intra_Move ──
+
+def build_intraday_columns(con, block_id: str, underlying: str) -> pd.DataFrame:
+    """
+    Pull VIX_at_Entry, VIX_at_Close, and Intra_Move_Pct from market.intraday
+    where coverage exists. VIX-at-entry/close uses the VIX 15-min bar's `open`
+    (= price at bar start, cleanest "at this timestamp" reading, no lookahead).
+    Intra_Move_Pct = (underlying bar open at entry − underlying daily open) /
+    underlying daily open × 100 — percentage move from today's open to entry.
+
+    Also returns `underlying_daily_open_tb` so the OO CSV fallback layer can
+    convert OO's `Movement` (in points) to percentage using the same denominator.
+
+    time_opened / time_closed in trades.trade_data are 'HH:MM:SS';
+    market.intraday.time is 'HH:MM' — substring(1,5) strips seconds.
+
+    Returns DataFrame with columns:
+        trade_index, VIX_at_Entry_tb, VIX_at_Close_tb, Intra_Move_Pct_tb,
+        underlying_daily_open_tb
+    NULLs mean no bar matched — the OO CSV fallback will try next.
+    """
+    return con.execute(f"""
+        WITH t AS (
+            SELECT
+                ROW_NUMBER() OVER (ORDER BY date_opened, time_opened, rowid) AS trade_index,
+                CAST(date_opened AS DATE) AS date_opened,
+                SUBSTRING(time_opened, 1, 5) AS time_opened_bar,
+                CAST(date_closed AS DATE) AS date_closed,
+                SUBSTRING(time_closed, 1, 5) AS time_closed_bar
+            FROM trades.trade_data
+            WHERE block_id = ?
+        )
+        SELECT
+            t.trade_index,
+            vix_entry.open AS VIX_at_Entry_tb,
+            vix_close.open AS VIX_at_Close_tb,
+            -- Use u_entry.open (= underlying price AT the bar's timestamp, e.g. 15:45:00)
+            -- rather than .close (which is price at bar end, ~15:59:59). Matches OO's
+            -- Opening Price convention. Converted to percentage of today's open.
+            -- Verified 2022-05-16 SPX: u_entry.open=4007.08, u_day.open=4013.02
+            -- → Intra_Move = -5.94 pts / 4013.02 × 100 = -0.148%.
+            CASE
+                WHEN u_day.open IS NULL OR u_day.open = 0 THEN NULL
+                ELSE (u_entry.open - u_day.open) / u_day.open * 100
+            END AS Intra_Move_Pct_tb,
+            u_day.open AS underlying_daily_open_tb,
+            u_day.Prior_Close AS underlying_prior_close_tb
+        FROM t
+        LEFT JOIN market.intraday vix_entry
+          ON vix_entry.ticker = 'VIX'
+         AND vix_entry.date = t.date_opened
+         AND vix_entry.time = t.time_opened_bar
+        LEFT JOIN market.intraday vix_close
+          ON vix_close.ticker = 'VIX'
+         AND vix_close.date = t.date_closed
+         AND vix_close.time = t.time_closed_bar
+        LEFT JOIN market.intraday u_entry
+          ON u_entry.ticker = '{underlying}'
+         AND u_entry.date = t.date_opened
+         AND u_entry.time = t.time_opened_bar
+        LEFT JOIN market.daily u_day
+          ON u_day.ticker = '{underlying}'
+         AND u_day.date = t.date_opened
+        ORDER BY t.trade_index
+    """, [block_id]).df()
+
+
+def find_oo_trade_log(block_folder: pathlib.Path) -> Optional[pathlib.Path]:
+    """
+    Locate the OO trade-log CSV in the block folder. Skips the
+    alex-tradeblocks-ref/ subfolder (our own outputs) and returns the first
+    CSV whose header has 'Date Opened' + 'Time Opened' + 'Legs' — the minimum
+    schema of an OO trade-log export.
+    """
+    for p in sorted(block_folder.glob("*.csv")):
+        if "alex-tradeblocks-ref" in p.parts:
+            continue
+        try:
+            header = pd.read_csv(p, nrows=0).columns.tolist()
+        except Exception:
+            continue
+        if {"Date Opened", "Time Opened", "Legs"}.issubset(set(header)):
+            return p
+    return None
+
+
+def build_oo_fallback(block_folder: pathlib.Path) -> Tuple[pd.DataFrame, Dict[str, object]]:
+    """
+    Read the OO trade-log CSV to provide fallback values for trades where
+    market.intraday had no bar. Returns (df, meta).
+
+    The returned df is keyed on normalized (date_opened, time_opened) strings
+    ('YYYY-MM-DD' and 'HH:MM:SS') and carries:
+        VIX_at_Entry_oo, VIX_at_Close_oo, Intra_Move_oo
+    NaN for any column the CSV doesn't carry — OO's default export does NOT
+    include VIX, so those will almost always be NaN. 'Movement' IS exported,
+    so Intra_Move_oo is typically populated for every trade.
+
+    meta carries:
+        csv_path      — the discovered path (or None if no CSV found)
+        vix_entry_col — column name matched for entry-VIX (or None)
+        vix_close_col — column name matched for close-VIX (or None)
+        movement_col  — True if 'Movement' column exists
+    """
+    meta: Dict[str, object] = {
+        "csv_path": None, "vix_entry_col": None,
+        "vix_close_col": None, "movement_col": False, "gap_col": False,
+    }
+    log_path = find_oo_trade_log(block_folder)
+    if log_path is None:
+        return pd.DataFrame(), meta
+    meta["csv_path"] = log_path
+
+    raw = pd.read_csv(log_path)
+
+    # Normalized match keys — strings to dodge timezone / type drift.
+    date_key = pd.to_datetime(raw["Date Opened"], errors="coerce").dt.strftime("%Y-%m-%d")
+    time_key = raw["Time Opened"].astype(str).str.slice(0, 8)
+
+    # VIX column detection — check likely custom-column names.
+    vix_entry_candidates = ["VIX at Entry", "VIX Entry", "Opening VIX", "VIX"]
+    vix_close_candidates = ["VIX at Close", "VIX Close", "Closing VIX", "VIX at Exit"]
+    vix_entry_col = next((c for c in vix_entry_candidates if c in raw.columns), None)
+    vix_close_col = next((c for c in vix_close_candidates if c in raw.columns), None)
+    if vix_entry_col == vix_close_col and vix_entry_col is not None:
+        # The bare column 'VIX' would map to both — ambiguous. Treat as entry only.
+        vix_close_col = None
+    meta["vix_entry_col"] = vix_entry_col
+    meta["vix_close_col"] = vix_close_col
+
+    out = pd.DataFrame({
+        "_date_opened_oo": date_key,
+        "_time_opened_oo": time_key,
+    })
+    out["VIX_at_Entry_oo"] = (pd.to_numeric(raw[vix_entry_col], errors="coerce")
+                              if vix_entry_col else pd.Series([pd.NA] * len(raw)))
+    out["VIX_at_Close_oo"] = (pd.to_numeric(raw[vix_close_col], errors="coerce")
+                              if vix_close_col else pd.Series([pd.NA] * len(raw)))
+    # OO Movement is in POINTS — kept as-is here; the coalesce layer converts
+    # to percentage using the underlying's daily open so the scale matches
+    # the intraday-derived Intra_Move_Pct.
+    if "Movement" in raw.columns:
+        out["Intra_Move_Points_oo"] = pd.to_numeric(raw["Movement"], errors="coerce")
+        meta["movement_col"] = True
+    else:
+        out["Intra_Move_Points_oo"] = pd.Series([pd.NA] * len(raw))
+
+    # OO Gap is in POINTS (today's open − prior close). Coalesce layer converts
+    # to percentage using underlying PRIOR CLOSE (standard Gap% convention).
+    # Fallback path for the groups-CSV-resolved Gap_Pct when market.daily
+    # coverage for the block's underlying is absent pre-some-date.
+    if "Gap" in raw.columns:
+        out["Gap_Points_oo"] = pd.to_numeric(raw["Gap"], errors="coerce")
+        meta["gap_col"] = True
+    else:
+        out["Gap_Points_oo"] = pd.Series([pd.NA] * len(raw))
+        meta["gap_col"] = False
+
+    return out, meta
+
+
+def coalesce_trade_context(
+    df: pd.DataFrame,
+    intraday: pd.DataFrame,
+    oo: pd.DataFrame,
+) -> Tuple[pd.DataFrame, Dict[str, Dict[str, int]]]:
+    """
+    Merge intraday (primary) + OO CSV (fallback) into df. Adds these columns:
+        VIX_at_Entry, VIX_at_Close, Intra_Move_Pct
+    OO CSV's `Movement` column is in points; we convert to percentage using
+    the underlying's daily open (from intraday lookup) so the scale matches
+    the intraday-derived values.
+    Drops intermediate _tb / _oo / _date_*_oo / _time_*_oo / underlying_daily_open_tb.
+
+    Returns (df, coverage). coverage is a dict keyed by output column name;
+    each value is {'tb_intraday': N, 'oo_csv': N, 'missing': N}.
+    """
+    if not intraday.empty:
+        df = df.merge(intraday, on="trade_index", how="left")
+    else:
+        for c in ("VIX_at_Entry_tb", "VIX_at_Close_tb",
+                  "Intra_Move_Pct_tb", "underlying_daily_open_tb",
+                  "underlying_prior_close_tb"):
+            df[c] = pd.NA
+
+    if not oo.empty:
+        df["_date_opened_oo"] = df["date_opened"].astype(str)
+        df["_time_opened_oo"] = df["time_opened"].astype(str).str.slice(0, 8)
+        df = df.merge(oo, on=["_date_opened_oo", "_time_opened_oo"], how="left")
+        df = df.drop(columns=["_date_opened_oo", "_time_opened_oo"], errors="ignore")
+    else:
+        for c in ("VIX_at_Entry_oo", "VIX_at_Close_oo",
+                  "Intra_Move_Points_oo", "Gap_Points_oo"):
+            df[c] = pd.NA
+
+    # Convert OO points to percentages using appropriate denominators:
+    #   Intra_Move_Pct = Movement / today_open × 100
+    #   Gap_Pct        = Gap      / prior_close × 100  (standard Gap% convention)
+    # Guard against div-by-zero explicitly rather than relying on deprecated
+    # `use_inf_as_na` — replace inf with NaN after the division.
+    import numpy as np
+    u_open = pd.to_numeric(df.get("underlying_daily_open_tb", pd.Series([pd.NA]*len(df))), errors="coerce")
+    u_prior = pd.to_numeric(df.get("underlying_prior_close_tb", pd.Series([pd.NA]*len(df))), errors="coerce")
+    oo_move_pts = pd.to_numeric(df.get("Intra_Move_Points_oo", pd.Series([pd.NA]*len(df))), errors="coerce")
+    oo_gap_pts = pd.to_numeric(df.get("Gap_Points_oo", pd.Series([pd.NA]*len(df))), errors="coerce")
+    safe_open = u_open.where(u_open != 0, other=np.nan)
+    safe_prior = u_prior.where(u_prior != 0, other=np.nan)
+    df["Intra_Move_Pct_oo"] = (oo_move_pts / safe_open * 100).replace([np.inf, -np.inf], np.nan)
+    df["Gap_Pct_oo"] = (oo_gap_pts / safe_prior * 100).replace([np.inf, -np.inf], np.nan)
+
+    coverage: Dict[str, Dict[str, int]] = {}
+    for out_col, tb_col, oo_col in [
+        ("VIX_at_Entry",   "VIX_at_Entry_tb",   "VIX_at_Entry_oo"),
+        ("VIX_at_Close",   "VIX_at_Close_tb",   "VIX_at_Close_oo"),
+        ("Intra_Move_Pct", "Intra_Move_Pct_tb", "Intra_Move_Pct_oo"),
+    ]:
+        tb = pd.to_numeric(df[tb_col], errors="coerce") if tb_col in df.columns else pd.Series([pd.NA] * len(df))
+        oo_series = pd.to_numeric(df[oo_col], errors="coerce") if oo_col in df.columns else pd.Series([pd.NA] * len(df))
+        df[out_col] = tb.fillna(oo_series)
+        n_tb = int(tb.notna().sum())
+        n_oo = int((tb.isna() & oo_series.notna()).sum())
+        n_missing = int((tb.isna() & oo_series.isna()).sum())
+        coverage[out_col] = {"tb_intraday": n_tb, "oo_csv": n_oo, "missing": n_missing}
+
+    # Gap_Pct gets a different treatment: the groups-CSV filter resolver is the
+    # PRIMARY path (pulls market.daily enrichment's Gap_Pct). This fallback only
+    # fires if that path failed. Keep Gap_Pct_oo in the dataframe for main() to
+    # apply as a post-merge fill after filter_frame is merged in.
+
+    df = df.drop(columns=["VIX_at_Entry_tb", "VIX_at_Close_tb",
+                          "Intra_Move_Pct_tb", "underlying_daily_open_tb",
+                          "underlying_prior_close_tb",
+                          "VIX_at_Entry_oo", "VIX_at_Close_oo",
+                          "Intra_Move_Points_oo", "Intra_Move_Pct_oo",
+                          "Gap_Points_oo"],
+                 errors="ignore")
+    # NOTE: Gap_Pct_oo intentionally NOT dropped — main() uses it for post-fill.
+    return df, coverage
 
 
 def summarize_pcr(df: pd.DataFrame) -> str:
@@ -550,15 +869,18 @@ def main() -> int:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     ap.add_argument("block_id", help="Block folder name under TB root")
-    ap.add_argument("--tb-root", default=TB_ROOT_DEFAULT,
-                    help="TradeBlocks Data root directory")
+    ap.add_argument("--tb-root", default=None,
+                    help=("TradeBlocks Data root directory. If omitted, walks up "
+                          "from cwd looking for analytics.duckdb + market.duckdb "
+                          "and uses the first ancestor that has both."))
     ap.add_argument("--groups-csv", default=None,
                     help=("Path to a specific filter-groups CSV to use "
                           "(e.g. a .V1 / .V2 / .calendar variant). Overrides auto-resolution. "
                           "Path may be absolute or relative to TB root."))
     args = ap.parse_args()
 
-    tb_root = pathlib.Path(args.tb_root).resolve()
+    tb_root = (pathlib.Path(args.tb_root).resolve() if args.tb_root
+               else default_tb_root())
     skill_folder = pathlib.Path(__file__).resolve().parent
     shared_dir = (skill_folder.parent / "_shared").resolve()
     block_folder = tb_root / args.block_id
@@ -627,6 +949,12 @@ def main() -> int:
         base = build_base_frame(con, args.block_id)
         print(f"\nPCR summary: {summarize_pcr(base)}")
 
+        # Intraday VIX / underlying lookup at each trade's entry and close times.
+        # Primary source for VIX_at_Entry, VIX_at_Close, Intra_Move_Pct.
+        # Uses the block's detected `underlying` ticker (SPX / QQQ / IWM / SPY /
+        # etc.) — don't hardcode SPX.
+        intraday_ctx = build_intraday_columns(con, args.block_id, underlying)
+
         # Filter frame
         skipped: dict[str, str] = {}
         filter_frame, deferred = build_filter_columns(con, args.block_id, underlying, groups, skipped)
@@ -637,32 +965,67 @@ def main() -> int:
     else:
         df = base.merge(filter_frame, on="date_opened", how="left")
 
-    # Handle trade-level filter aliases — groups CSV may request SLR, premium_per_contract, margin_per_contract
+    # Handle trade-level filter aliases. Columns already populated by base_frame
+    # or coalesce_trade_context fall through without warning; unknown columns
+    # land in `skipped`. The post-conditions of SLR, premium_per_contract, and
+    # margin_per_contract are guaranteed by build_base_frame; VIX_at_Entry,
+    # VIX_at_Close, and Intra_Move_Pct are populated further down by the
+    # intraday + OO-fallback coalesce layer.
+    _trade_level_already_present = {
+        "premium_per_contract", "margin_per_contract",
+        "VIX_at_Entry", "VIX_at_Close", "Intra_Move_Pct",
+    }
     for _, r in groups[groups["active"] & (groups["_tb_schema"] == "trades.trade_data")].iterrows():
         csv_col = r["CSV Column"]
         if csv_col == "SLR":
             df["SLR"] = df["_slr_computed"]
-        elif csv_col in ("premium_per_contract", "margin_per_contract"):
-            # Already present in base — leave as-is
+        elif csv_col in _trade_level_already_present:
             pass
         else:
             skipped[csv_col] = f"trade-level filter '{csv_col}' not implemented"
 
     df = df.drop(columns=["_slr_computed"], errors="ignore")
 
+    # Merge intraday + OO CSV fallback for VIX_at_Entry / VIX_at_Close / Intra_Move.
+    # Primary = market.intraday (TB-native), fallback = OO trade-log CSV in block folder.
+    oo_fallback_df, oo_meta = build_oo_fallback(block_folder)
+    df, coverage = coalesce_trade_context(df, intraday_ctx, oo_fallback_df)
+
+    # Gap_Pct is populated by the groups-CSV filter resolver from market.daily
+    # enrichment (primary). Apply OO CSV fallback (Gap_Pct_oo from coalesce)
+    # where primary produced NaN — belt-and-suspenders for blocks on tickers
+    # with limited market.daily coverage (e.g. SPY/IWM pre-2024-03).
+    gap_coverage = {"market_daily": 0, "oo_csv": 0, "missing": 0}
+    if "Gap_Pct" in df.columns:
+        primary = pd.to_numeric(df["Gap_Pct"], errors="coerce")
+        fallback = pd.to_numeric(df.get("Gap_Pct_oo", pd.Series([pd.NA]*len(df))), errors="coerce")
+        df["Gap_Pct"] = primary.fillna(fallback)
+        gap_coverage["market_daily"] = int(primary.notna().sum())
+        gap_coverage["oo_csv"] = int((primary.isna() & fallback.notna()).sum())
+        gap_coverage["missing"] = int((primary.isna() & fallback.isna()).sum())
+    elif "Gap_Pct_oo" in df.columns:
+        # Gap_Pct wasn't requested in groups CSV but OO has it — still expose.
+        df["Gap_Pct"] = pd.to_numeric(df["Gap_Pct_oo"], errors="coerce")
+        gap_coverage["oo_csv"] = int(df["Gap_Pct"].notna().sum())
+        gap_coverage["missing"] = int(df["Gap_Pct"].isna().sum())
+    df = df.drop(columns=["Gap_Pct_oo"], errors="ignore")
+    coverage["Gap_Pct"] = gap_coverage  # attach to the same coverage dict for reporting
+
     # Post-hoc ratios (e.g., VIX9D/VIX_Ratio)
     df = apply_computed_ratios(df, deferred, skipped)
 
     # Null-threshold filter — don't prune locked base cols or requested non-null cols
     exempt = {"trade_index", "date_opened", "time_opened", "margin_per_contract",
-              "premium_per_contract", "pl_per_contract", "rom_pct", "pcr_pct"}
+              "premium_per_contract", "pl_per_contract", "rom_pct", "pcr_pct",
+              "VIX_at_Entry", "VIX_at_Close", "Intra_Move_Pct"}
     candidate_cols = [r["CSV Column"] for _, r in groups[groups["active"]].iterrows()
                       if r["CSV Column"] in df.columns]
     df = apply_null_threshold(df, candidate_cols, skipped, exempt)
 
-    # Order columns: locked base, then groups CSV order (only those that survived)
+    # Order columns: locked base (including new context cols), then groups CSV order.
     locked = ["trade_index", "date_opened", "time_opened", "margin_per_contract",
-              "premium_per_contract", "pl_per_contract", "rom_pct", "pcr_pct"]
+              "premium_per_contract", "pl_per_contract", "rom_pct", "pcr_pct",
+              "VIX_at_Entry", "VIX_at_Close", "Intra_Move_Pct"]
     filter_order = [r["CSV Column"] for _, r in groups[groups["active"]].iterrows()
                     if r["CSV Column"] in df.columns and r["CSV Column"] not in locked]
     # de-dupe while preserving order
@@ -734,6 +1097,14 @@ def main() -> int:
         print(f"  Holidays CSV:   {holidays_rel}  [{holidays_tag}]")
     else:
         print(f"  Holidays CSV:   (not loaded — {holiday_note})")
+    if oo_meta.get("csv_path"):
+        try:
+            oo_rel = oo_meta["csv_path"].relative_to(tb_root)
+        except ValueError:
+            oo_rel = oo_meta["csv_path"]
+        print(f"  OO trade log:   {oo_rel}  [block-local]  (fallback source)")
+    else:
+        print(f"  OO trade log:   (none found in block folder — no fallback available)")
     print(f"  Output CSV:     {out_rel}  [{out_tag}]")
 
     # Section 2 — BUILD STATS
@@ -743,6 +1114,49 @@ def main() -> int:
     print(f"  Filter columns:   {n_filter} populated, {n_skipped} skipped")
     print(f"  Holiday columns:  {n_holiday}")
     print(f"  Total columns:    {len(df.columns)}")
+
+    # Section 2b — TRADE-CONTEXT COVERAGE
+    # Sources: VIX_at_Entry / VIX_at_Close / Intra_Move_Pct come from
+    # market.intraday (primary) or OO trade-log CSV (fallback).
+    # Gap_Pct comes from market.daily enrichment (primary) or OO CSV (fallback).
+    # Trades missing in both sources stay NaN and are flagged here.
+    print("\nTrade-context coverage")
+    any_warnings = False
+    for col_name, cov in coverage.items():
+        # Use "primary" / "fallback" / "missing" language — source names differ
+        # per column (tb_intraday vs market_daily) but the shape is the same.
+        primary_key = "market_daily" if "market_daily" in cov else "tb_intraday"
+        primary_label = "market.daily" if primary_key == "market_daily" else "TB intraday"
+        total = cov.get(primary_key, 0) + cov.get("oo_csv", 0) + cov.get("missing", 0)
+        if total == 0:
+            continue
+        parts = [f"{primary_label}: {cov.get(primary_key, 0)}"]
+        if cov.get("oo_csv", 0) > 0:
+            parts.append(f"OO CSV fallback: {cov['oo_csv']}")
+        if cov.get("missing", 0) > 0:
+            parts.append(f"missing: {cov['missing']}")
+        print(f"  {col_name:<15} {'  ·  '.join(parts)}")
+        if cov.get("oo_csv", 0) > 0 or cov.get("missing", 0) > 0:
+            any_warnings = True
+    if any_warnings:
+        if oo_meta.get("csv_path") is None:
+            print("  ⚠  No OO trade log CSV found in block folder — cannot backfill pre-intraday trades.")
+        else:
+            found = []
+            if oo_meta.get("vix_entry_col"):
+                found.append(f"VIX entry = '{oo_meta['vix_entry_col']}'")
+            if oo_meta.get("vix_close_col"):
+                found.append(f"VIX close = '{oo_meta['vix_close_col']}'")
+            if oo_meta.get("movement_col"):
+                found.append("Movement = 'Movement'")
+            if oo_meta.get("gap_col"):
+                found.append("Gap = 'Gap'")
+            if found:
+                print(f"  OO columns used for fallback: {', '.join(found)}")
+            else:
+                print(f"  ⚠  OO CSV has no usable fallback columns.")
+    else:
+        print("  (all trades covered by primary source — no fallback needed)")
 
     # Section 3 — SKIPPED FILTERS (explicit missing-filter block)
     print("\nSkipped filters")
