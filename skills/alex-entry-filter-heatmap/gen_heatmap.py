@@ -515,10 +515,15 @@ def _generate(config):
         name = f["Filter"].strip()
         short_name = (f.get("Short Name") or name).strip() or name
         entry_group = f["Entry Group"].strip()
+        # tool_tip_info is optional — absent in older block-local groups CSVs.
+        # When present, it carries a one-paragraph description (what/calc/
+        # correlates) that the renderer appends to column-label hover tooltips.
+        tool_tip_info = (f.get("tool_tip_info") or "").strip()
 
         entry = {
             "index": idx, "name": name, "short_name": short_name, "col": col,
             "group": entry_group, "type": ft or "continuous",
+            "tool_tip_info": tool_tip_info,
         }
         if col not in seen_cols or idx < seen_cols[col]["index"]:
             seen_cols[col] = entry
@@ -817,9 +822,14 @@ def _generate(config):
     h('<th>Index</th><th>Filter</th><th>Short Name</th><th>CSV Column</th><th>Entry Group</th><th>Filter Type</th>')
     h('</tr></thead><tbody>')
     for f in selected_filters:
+        # Hover tooltip on the "Filter" column (long name) mirrors the column-
+        # label tooltips elsewhere in the report. Blank tti → no title attr so
+        # the cell doesn't render a useless empty tooltip box.
+        tti = (f.get("tool_tip_info") or "").strip()
+        filter_title_attr = f' title="{esc(tti)}"' if tti else ''
         h('<tr>')
         h(f'<td>{esc(f.get("Index",""))}</td>')
-        h(f'<td>{esc(f.get("Filter",""))}</td>')
+        h(f'<td{filter_title_attr}>{esc(f.get("Filter",""))}</td>')
         h(f'<td><strong>{esc(f.get("Short Name",""))}</strong></td>')
         h(f'<td class="mono">{esc(f.get("CSV Column",""))}</td>')
         h(f'<td>{esc(f.get("Entry Group",""))}</td>')
@@ -851,7 +861,14 @@ def _generate(config):
         name = meta.get("name", "")
         col = meta.get("col", "")
         sym = dir_symbols[d]
-        h(f'<th title="{esc(name)} ({esc(col)}) — {d}">{esc(short)}{sym}</th>')
+        # Column-label hover tooltip. Header line stays as before; when the
+        # groups CSV has a tool_tip_info entry for this filter we append it on
+        # new lines so the description appears only on the indicator label,
+        # not on the data cells (which keep their per-cell data tooltip).
+        header_line = f"{name} ({col}) — {d}"
+        tti = meta.get("tool_tip_info", "")
+        th_title = f"{header_line}\n\n{tti}" if tti else header_line
+        h(f'<th title="{esc(th_title)}">{esc(short)}{sym}</th>')
     h('</tr></thead><tbody>')
     for target in TARGETS:
         h(f'<tr><td class="disc-label">{target}r%</td>')
@@ -887,8 +904,12 @@ def _generate(config):
     h('</tr></thead><tbody>')
 
     def label_cell(meta, rowspan=None):
+        # Shared by By Filter Group + Binary/Categorical Breakdown. Data-cell
+        # tooltips stay untouched — this only affects the filter-name column.
         rs = f' rowspan="{rowspan}"' if rowspan else ''
-        tip = f"{meta['name']}  —  CSV: {meta['col']}  —  Index {meta['index']}"
+        header_line = f"{meta['name']}  —  CSV: {meta['col']}  —  Index {meta['index']}"
+        tti = meta.get('tool_tip_info', '')
+        tip = f"{header_line}\n\n{tti}" if tti else header_line
         return (f'<td class="filter-name"{rs} title="{esc(tip)}">'
                 f'<span class="short">{esc(meta["short_name"])}</span>'
                 f'<span class="colname">{esc(meta["col"])}</span>'

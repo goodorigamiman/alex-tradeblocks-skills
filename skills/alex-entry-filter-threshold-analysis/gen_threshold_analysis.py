@@ -236,29 +236,299 @@ def sanitize_short_name_for_filename(name: str) -> str:
 
 # ── OO Translation JS snippets ──────────────────────────────────────────────
 
+# NOTE: these are regular multi-line strings (NOT f-strings), so braces must
+# be SINGLE. They get substituted into the outer f-string as a raw value —
+# the f-string's brace-escape semantics don't apply to the substituted content.
+# The prior `{{`/`}}` double-bracing was a latent bug: it was syntactically
+# tolerated inside function bodies (JS treats `function f() {{ ... }}` as a
+# nested block), but produced real syntax errors anywhere else (e.g. `else {{`).
 OO_TRANSLATE_SIMPLE = """
-function ooFilter(dir, threshold, fieldLabel) {{
+function ooFilter(dir, threshold, fieldLabel) {
     const v = threshold;
     if (dir === '>=') return 'Min ' + fieldLabel + ' = ' + v.toFixed(4);
     else return 'Max ' + fieldLabel + ' = ' + v.toFixed(4);
-}}"""
+}"""
 
 OO_TRANSLATE_VIX_ON = """
-function ooFilter(dir, threshold, fieldLabel) {{
+function ooFilter(dir, threshold, fieldLabel) {
     const v = threshold;
-    if (dir === '>=') {{
+    if (dir === '>=') {
         if (v >= 0) return 'Min O/N Move Up = ' + Math.abs(v).toFixed(2);
         else return 'Max O/N Move Down = ' + Math.abs(v).toFixed(2);
-    }} else {{
+    } else {
         if (v >= 0) return 'Max O/N Move Up = ' + Math.abs(v).toFixed(2);
         else return 'Min O/N Move Down = ' + Math.abs(v).toFixed(2);
-    }}
-}}"""
+    }
+}"""
 
 OO_TRANSLATORS = {
     'simple': OO_TRANSLATE_SIMPLE,
     'vix_on': OO_TRANSLATE_VIX_ON,
 }
+
+
+# ── Aggregate pre-computation ────────────────────────────────────────────────
+#
+# Historical note (why this exists):
+#
+# Earlier versions embedded the full per-trade array in the HTML and let the
+# browser compute threshData / gtRefs / ltRefs / comboRefs / allPairs / comboCurve
+# client-side. The combo computations contain nested loops over unique threshold
+# pairs with an inner `raw.filter(...)` that scans the per-trade array for each
+# pair. On a block with u unique thresholds and n trades this is O(u^2 * n);
+# for the No-Filters universe (u ≈ 4,000, n ≈ 4,300) the browser hangs.
+#
+# Fix: compute every aggregate here in Python using sorted prefix sums — each
+# (lo, hi) pair becomes an O(1) lookup. Total work is O(u^2) scalar ops, a few
+# seconds at u ≈ 4,000. Client then has only render work to do.
+#
+# Contract: the output dict keys mirror the JS variable names that the HTML
+# template still references, so the template change is a one-for-one constant
+# substitution.
+
+def _compute_aggregates(
+    vals: np.ndarray,
+    roms: np.ndarray,
+    pls: np.ndarray,
+    baseline_net: float,
+    baseline_rom: float,
+    baseline_wr: float,
+    baseline_pf: float,
+    baseline_pl: float,
+) -> Dict:
+    """Pre-compute everything the HTML needs so the browser does zero math.
+
+    Returns a dict with JSON-serializable lists/dicts matching the old JS var names.
+    """
+    n = len(vals)
+    if n == 0:
+        raise RuntimeError("_compute_aggregates called with empty array")
+
+    # Sort by threshold value (stable) and align companion arrays.
+    order = np.argsort(vals, kind='mergesort')
+    s_vals = vals[order]
+    s_roms = roms[order]
+    s_pls  = pls[order]
+    unique_vals = np.unique(vals)
+    u = len(unique_vals)
+
+    # Prefix sums: index 0 is empty-prefix, index k is sum of first k sorted elements.
+    def prefix(arr):
+        return np.concatenate(([0.0], np.cumsum(arr.astype(np.float64))))
+
+    cum_rom  = prefix(s_roms)
+    cum_pl   = prefix(s_pls)
+    cum_wins = prefix((s_roms > 0).astype(np.float64))
+    cum_pos  = prefix(np.where(s_roms > 0,  s_roms, 0.0))
+    cum_neg  = prefix(np.where(s_roms < 0, -s_roms, 0.0))
+
+    # Boundaries for each unique threshold:
+    #   idx_lo_uni[i] = first sorted index with value >= unique_vals[i]   (left)
+    #   idx_hi_uni[i] = first sorted index with value >  unique_vals[i]   (right exclusive)
+    idx_lo_uni = np.searchsorted(s_vals, unique_vals, side='left').astype(int)
+    idx_hi_uni = np.searchsorted(s_vals, unique_vals, side='right').astype(int)
+
+    safe_net = baseline_net if baseline_net != 0 else 1e-9  # avoid div-by-zero in degenerate blocks
+
+    # ── threshData: one entry per unique threshold ──────────────────────────
+    thresh_data: List[Dict] = []
+    for i in range(u):
+        t = float(unique_vals[i])
+        lo_gt = int(idx_lo_uni[i])  # trades with value >= t
+        hi_lt = int(idx_hi_uni[i])  # trades with value <= t (exclusive upper == inclusive lower)
+
+        gt_n = n - lo_gt
+        lt_n = hi_lt
+        if gt_n < 1 or lt_n < 1:
+            continue
+
+        gt_net = float(cum_rom[n] - cum_rom[lo_gt])
+        lt_net = float(cum_rom[hi_lt])
+
+        gt_rom = gt_net / gt_n
+        lt_rom = lt_net / lt_n
+
+        gt_wr = float(cum_wins[n] - cum_wins[lo_gt]) / gt_n * 100
+        lt_wr = float(cum_wins[hi_lt]) / lt_n * 100
+
+        gt_gp = float(cum_pos[n] - cum_pos[lo_gt])
+        gt_gl = float(cum_neg[n] - cum_neg[lo_gt])
+        lt_gp = float(cum_pos[hi_lt])
+        lt_gl = float(cum_neg[hi_lt])
+
+        gt_pf = min(gt_gp / gt_gl if gt_gl > 0 else 99.0, 99.0)
+        lt_pf = min(lt_gp / lt_gl if lt_gl > 0 else 99.0, 99.0)
+
+        gt_pl = float(cum_pl[n] - cum_pl[lo_gt]) / gt_n
+        lt_pl = float(cum_pl[hi_lt]) / lt_n
+
+        # pctTrades: strictly less than t (matches old JS behavior).
+        idx_strict = int(np.searchsorted(s_vals, t, side='left'))
+        pct_trades = idx_strict / n * 100
+        lt_net_strict = float(cum_rom[idx_strict])
+        pct_net_ror = lt_net_strict / safe_net * 100
+
+        gt_retained = gt_net / safe_net * 100
+        lt_retained = lt_net / safe_net * 100
+
+        thresh_data.append({
+            't': t,
+            'gtRom': gt_rom, 'ltRom': lt_rom,
+            'gtNet': gt_net, 'ltNet': lt_net,
+            'gtWr':  gt_wr,  'ltWr':  lt_wr,
+            'gtPf':  gt_pf,  'ltPf':  lt_pf,
+            'gtPl':  gt_pl,  'ltPl':  lt_pl,
+            'gtN':   int(gt_n), 'ltN':   int(lt_n),
+            'pctTrades':   pct_trades,
+            'pctNetRor':   pct_net_ror,
+            'gtRetained':  gt_retained,
+            'ltRetained':  lt_retained,
+        })
+
+    # ── Retention references (single-direction) ────────────────────────────
+    ret_targets = [99, 95, 90, 80, 70, 60, 50]
+    min_val = float(unique_vals[0])
+    max_val = float(unique_vals[-1])
+    baseline_fallback = {
+        't': max_val,
+        'gtRom': baseline_rom, 'ltRom': baseline_rom,
+        'gtNet': baseline_net, 'ltNet': baseline_net,
+        'gtWr':  baseline_wr,  'ltWr':  baseline_wr,
+        'gtPf':  baseline_pf,  'ltPf':  baseline_pf,
+        'gtPl':  baseline_pl,  'ltPl':  baseline_pl,
+        'gtN':   n, 'ltN': n,
+        'gtRetained': 100.0, 'ltRetained': 100.0,
+        'pctTrades':  100.0, 'pctNetRor':  100.0,
+    }
+
+    gt_refs: Dict[int, Dict] = {}
+    for target in ret_targets:
+        best = None
+        for d in thresh_data:
+            if d['gtRetained'] >= target:
+                if best is None or d['t'] > best['t']:
+                    best = d
+        gt_refs[target] = best if best is not None else {**baseline_fallback, 't': min_val}
+
+    lt_refs: Dict[int, Dict] = {}
+    for target in ret_targets:
+        best = None
+        for d in thresh_data:
+            if d['ltRetained'] >= target:
+                if best is None or d['t'] < best['t']:
+                    best = d
+        lt_refs[target] = best if best is not None else dict(baseline_fallback)
+
+    # ── allPairs via prefix sums (O(u²) scalar ops — seconds, not hours) ───
+    all_pairs: List[Dict] = []
+    for i in range(u):
+        lo = float(unique_vals[i])
+        lo_start = int(idx_lo_uni[i])
+        for j in range(i, u):
+            hi_end = int(idx_hi_uni[j])
+            n_pair = hi_end - lo_start
+            if n_pair < 1:
+                continue
+            s_net  = float(cum_rom[hi_end]  - cum_rom[lo_start])
+            s_wins = float(cum_wins[hi_end] - cum_wins[lo_start])
+            s_gp   = float(cum_pos[hi_end]  - cum_pos[lo_start])
+            s_gl   = float(cum_neg[hi_end]  - cum_neg[lo_start])
+            s_pl   = float(cum_pl[hi_end]   - cum_pl[lo_start])
+            all_pairs.append({
+                'lo': lo, 'hi': float(unique_vals[j]),
+                'n':  int(n_pair),
+                'net':      s_net,
+                'retained': s_net / safe_net * 100,
+                'avg':      s_net / n_pair,
+                'wr':       s_wins / n_pair * 100,
+                'pf':       min(s_gp / s_gl, 99.0) if s_gl > 0 else 99.0,
+                'pl':       s_pl / n_pair,
+            })
+
+    # ── Combo retention references (best pair meeting each target) ─────────
+    combo_refs: Dict[int, Dict] = {}
+    for target in ret_targets:
+        best = None
+        best_avg = -float('inf')
+        for p in all_pairs:
+            if p['retained'] < target:
+                continue
+            if p['avg'] > best_avg:
+                best_avg = p['avg']
+                best = p
+        combo_refs[target] = best if best is not None else {
+            'lo': min_val, 'hi': max_val, 'n': n,
+            'avg': baseline_rom, 'net': baseline_net, 'retained': 100.0,
+            'wr': baseline_wr, 'pf': baseline_pf, 'pl': baseline_pl,
+        }
+
+    # ── Non-monotonic detection ────────────────────────────────────────────
+    gt_non_mono: Dict[int, bool] = {}
+    for target, ref in gt_refs.items():
+        dipped = any(d['t'] < ref['t'] and d['gtRetained'] < target for d in thresh_data)
+        if dipped:
+            gt_non_mono[target] = True
+
+    lt_non_mono: Dict[int, bool] = {}
+    for target, ref in lt_refs.items():
+        dipped = any(d['t'] > ref['t'] and d['ltRetained'] < target for d in thresh_data)
+        if dipped:
+            lt_non_mono[target] = True
+
+    combo_non_mono: Dict[int, bool] = {}
+    for target, ref in combo_refs.items():
+        dipped = False
+        for p in all_pairs:
+            if p['lo'] > ref['lo'] or p['hi'] < ref['hi']:
+                continue  # not a super-range of the ref — skip
+            if p['lo'] == ref['lo'] and p['hi'] == ref['hi']:
+                continue  # it's the ref itself
+            if p['retained'] < target:
+                dipped = True
+                break
+        if dipped:
+            combo_non_mono[target] = True
+
+    # ── Efficiency-frontier curves ─────────────────────────────────────────
+    gt_curve = [
+        {'x': d['gtRetained'], 'y': d['gtRom'], 't': d['t'], 'n': d['gtN']}
+        for d in thresh_data
+    ]
+    gt_curve.sort(key=lambda d: -d['x'])
+
+    lt_curve = [
+        {'x': d['ltRetained'], 'y': d['ltRom'], 't': d['t'], 'n': d['ltN']}
+        for d in thresh_data
+    ]
+    lt_curve.sort(key=lambda d: -d['x'])
+
+    # Combo curve: Pareto front of (retained, avg). Walk pairs by retention desc,
+    # keep only those whose avg beats the running max. Equivalent to the old JS
+    # target-sweep output after dedupe, but O(u² log u²) instead of O(501·u²).
+    pairs_by_ret_desc = sorted(all_pairs, key=lambda p: -p['retained'])
+    running_max_avg = -float('inf')
+    combo_curve: List[Dict] = []
+    for p in pairs_by_ret_desc:
+        if p['avg'] > running_max_avg:
+            running_max_avg = p['avg']
+            combo_curve.append({
+                'x': p['retained'], 'y': p['avg'],
+                'lo': p['lo'], 'hi': p['hi'], 'n': p['n'],
+            })
+    combo_curve.sort(key=lambda d: -d['x'])
+
+    return {
+        'threshData':    thresh_data,
+        'gtRefs':        {str(k): v for k, v in gt_refs.items()},
+        'ltRefs':        {str(k): v for k, v in lt_refs.items()},
+        'comboRefs':     {str(k): v for k, v in combo_refs.items()},
+        'gtNonMono':     {str(k): v for k, v in gt_non_mono.items()},
+        'ltNonMono':     {str(k): v for k, v in lt_non_mono.items()},
+        'comboNonMono':  {str(k): v for k, v in combo_non_mono.items()},
+        'gtCurve':       gt_curve,
+        'ltCurve':       lt_curve,
+        'comboCurve':    combo_curve,
+    }
 
 
 def _generate(config):
@@ -336,19 +606,50 @@ def _generate(config):
     print(f"Baseline: ROM={baseline_rom:.2f}%, Net={baseline_net:.1f}%, WR={baseline_wr:.1f}%, PF={baseline_pf:.2f}")
     print(f"Best fit: y = {slope:.4f}x + {intercept:.4f}")
 
+    # Pre-compute all aggregates in Python (prefix-sum sweep) so the browser
+    # does zero math. See _compute_aggregates docstring for the history.
+    n_unique = int(np.unique(vals).size)
+    print(f"Pre-computing aggregates ({n_unique} unique thresholds, ~{n_unique*(n_unique+1)//2:,} pairs)...")
+    aggregates = _compute_aggregates(
+        vals, roms, pls,
+        baseline_net=float(baseline_net),
+        baseline_rom=float(baseline_rom),
+        baseline_wr=float(baseline_wr),
+        baseline_pf=float(baseline_pf),
+        baseline_pl=float(baseline_pl),
+    )
+    print(f"  threshData: {len(aggregates['threshData'])} rows · "
+          f"gtCurve: {len(aggregates['gtCurve'])} · "
+          f"comboCurve: {len(aggregates['comboCurve'])} (Pareto) · "
+          f"non-mono: gt={len(aggregates['gtNonMono'])} lt={len(aggregates['ltNonMono'])} combo={len(aggregates['comboNonMono'])}")
+
     raw_json = json.dumps(raw_data)
+    thresh_data_json    = json.dumps(aggregates['threshData'])
+    gt_refs_json        = json.dumps(aggregates['gtRefs'])
+    lt_refs_json        = json.dumps(aggregates['ltRefs'])
+    combo_refs_json     = json.dumps(aggregates['comboRefs'])
+    gt_non_mono_json    = json.dumps(aggregates['gtNonMono'])
+    lt_non_mono_json    = json.dumps(aggregates['ltNonMono'])
+    combo_non_mono_json = json.dumps(aggregates['comboNonMono'])
+    gt_curve_json       = json.dumps(aggregates['gtCurve'])
+    lt_curve_json       = json.dumps(aggregates['ltCurve'])
+    combo_curve_json    = json.dumps(aggregates['comboCurve'])
 
     # Zero-x annotation JS (injected into annotations object)
     zero_x_thresh = ""
     zero_x_scatter = ""
     if show_zero_x:
+        # NOTE: these are regular multi-line strings (NOT f-strings), so braces
+        # must be SINGLE. They get substituted into the outer f-string as a raw
+        # value — the f-string's brace-escape semantics don't apply to the
+        # substituted content.
         zero_x_thresh = """
-    zeroX: {{
+    zeroX: {
         type: 'line', xMin: 0, xMax: 0, xScaleID: 'x',
         borderColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderDash: [2,2]
-    }},"""
+    },"""
         zero_x_scatter = """
-    zeroX: {{ type: 'line', xMin: 0, xMax: 0, borderColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderDash: [2,2] }},"""
+    zeroX: { type: 'line', xMin: 0, xMax: 0, borderColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderDash: [2,2] },"""
 
     # Short name for table headers
     field_short = field_label.split('(')[0].strip() if '(' in field_label else field_label
@@ -375,6 +676,16 @@ def _generate(config):
         intercept=intercept,
         r_squared=r_squared,
         raw_json=raw_json,
+        thresh_data_json=thresh_data_json,
+        gt_refs_json=gt_refs_json,
+        lt_refs_json=lt_refs_json,
+        combo_refs_json=combo_refs_json,
+        gt_non_mono_json=gt_non_mono_json,
+        lt_non_mono_json=lt_non_mono_json,
+        combo_non_mono_json=combo_non_mono_json,
+        gt_curve_json=gt_curve_json,
+        lt_curve_json=lt_curve_json,
+        combo_curve_json=combo_curve_json,
         oo_js=oo_js,
         zero_x_thresh=zero_x_thresh,
         zero_x_scatter=zero_x_scatter,
@@ -390,6 +701,9 @@ def _generate(config):
 def _build_html(*, field_label, field_short, title_text, block_name, subtitle_note,
                 n, baseline_rom, baseline_net, baseline_wr, baseline_pf, baseline_pl,
                 corr, slope, intercept, r_squared, raw_json,
+                thresh_data_json, gt_refs_json, lt_refs_json, combo_refs_json,
+                gt_non_mono_json, lt_non_mono_json, combo_non_mono_json,
+                gt_curve_json, lt_curve_json, combo_curve_json,
                 oo_js, zero_x_thresh, zero_x_scatter):
 
     return f'''<!DOCTYPE html>
@@ -481,143 +795,26 @@ const slope = {slope:.6f};
 const intercept = {intercept:.4f};
 const rSquared = {r_squared:.4f};
 
-const allVals = raw.map(r => r[0]).sort((a,b) => a-b);
-const uniqueVals = [...new Set(allVals)].sort((a,b) => a-b);
+// ── Pre-computed aggregates ─────────────────────────────────────────────
+// Every structure below is generated once in Python (see _compute_aggregates
+// in gen_threshold_analysis.py). The browser used to recompute all of this
+// from the raw per-trade array — that produced an O(u² × n) combo sweep that
+// hung on large blocks. Now the heavy work happens at HTML-generation time
+// and the client just renders.
+const threshData = {thresh_data_json};
+const uniqueVals = threshData.map(d => d.t);
+const minVal = uniqueVals.length ? uniqueVals[0] : 0;
+const maxVal = uniqueVals.length ? uniqueVals[uniqueVals.length - 1] : 0;
 
-// Compute threshold metrics at every unique value
-const threshData = [];
-for (const t of uniqueVals) {{
-    const gtRows = raw.filter(r => r[0] >= t);
-    const ltRows = raw.filter(r => r[0] <= t);
-    if (gtRows.length < 1 || ltRows.length < 1) continue;
-
-    const avg = a => a.reduce((s,v) => s+v, 0) / a.length;
-    const sum = a => a.reduce((s,v) => s+v, 0);
-
-    const gtRoms = gtRows.map(r => r[1]); const ltRoms = ltRows.map(r => r[1]);
-    const gtPls = gtRows.map(r => r[2]); const ltPls = ltRows.map(r => r[2]);
-
-    const gtRom = avg(gtRoms); const ltRom = avg(ltRoms);
-    const gtNet = sum(gtRoms); const ltNet = sum(ltRoms);
-    const gtWr = gtRoms.filter(v => v > 0).length / gtRows.length * 100;
-    const ltWr = ltRoms.filter(v => v > 0).length / ltRows.length * 100;
-    const gtGP = sum(gtRoms.filter(v => v > 0)); const gtGL = Math.abs(sum(gtRoms.filter(v => v < 0)));
-    const gtPf = gtGL > 0 ? gtGP / gtGL : 99;
-    const ltGP = sum(ltRoms.filter(v => v > 0)); const ltGL = Math.abs(sum(ltRoms.filter(v => v < 0)));
-    const ltPf = ltGL > 0 ? ltGP / ltGL : 99;
-
-    const pctTrades = raw.filter(r => r[0] < t).length / N * 100;
-    const ltNetAll = raw.filter(r => r[0] < t).reduce((s,r) => s + r[1], 0);
-    const pctNetRor = ltNetAll / baselineNet * 100;
-    const gtRetained = gtNet / baselineNet * 100;
-    const ltRetained = ltNet / baselineNet * 100;
-
-    threshData.push({{
-        t, gtRom, ltRom, gtNet, ltNet, gtWr, ltWr,
-        gtPf: Math.min(gtPf,99), ltPf: Math.min(ltPf,99),
-        gtPl: avg(gtPls), ltPl: avg(ltPls),
-        gtN: gtRows.length, ltN: ltRows.length,
-        pctTrades, pctNetRor, gtRetained, ltRetained,
-    }});
-}}
-
-// ── Retention references ────────────────────────────────────────────────
 const retTargets = [99, 95, 90, 80, 70, 60, 50];
 const retColors = {{99:'#3498db', 95:'#2ecc71', 90:'#27ae60', 80:'#f39c12', 70:'#e67e22', 60:'#e74c3c', 50:'#c0392b'}};
 
-const maxVal = uniqueVals[uniqueVals.length - 1];
-const minVal = uniqueVals[0];
-const baselineFallback = {{
-    t: maxVal, gtRom: baselineRom, ltRom: baselineRom, gtNet: baselineNet, ltNet: baselineNet,
-    gtWr: baselineWr, ltWr: baselineWr, gtPf: baselinePf, ltPf: baselinePf,
-    gtPl: baselinePl, ltPl: baselinePl, gtN: N, ltN: N,
-    gtRetained: 100, ltRetained: 100, pctTrades: 100, pctNetRor: 100
-}};
-
-const gtRefs = {{}};
-for (const target of retTargets) {{
-    let best = null;
-    for (const d of threshData) {{
-        if (d.gtRetained >= target) {{
-            if (!best || d.t > best.t) best = d;
-        }}
-    }}
-    gtRefs[target] = best || {{ ...baselineFallback, t: minVal }};
-}}
-
-const ltRefs = {{}};
-for (const target of retTargets) {{
-    let best = null;
-    for (const d of threshData) {{
-        if (d.ltRetained >= target) {{
-            if (!best || d.t < best.t) best = d;
-        }}
-    }}
-    ltRefs[target] = best || baselineFallback;
-}}
-
-const comboRefs = {{}};
-for (const target of retTargets) {{
-    let best = null;
-    let bestAvg = -999;
-    for (let i = 0; i < threshData.length; i++) {{
-        for (let j = i; j < threshData.length; j++) {{
-            const lo = threshData[i].t;
-            const hi = threshData[j].t;
-            const survivors = raw.filter(r => r[0] >= lo && r[0] <= hi);
-            if (survivors.length < 1) continue;
-            const sRoms = survivors.map(r => r[1]);
-            const sPls = survivors.map(r => r[2]);
-            const sNet = sRoms.reduce((s,v) => s+v, 0);
-            const retained = sNet / baselineNet * 100;
-            if (retained < target) continue;
-            const sAvg = sNet / survivors.length;
-            if (sAvg > bestAvg) {{
-                bestAvg = sAvg;
-                const sWr = sRoms.filter(v => v > 0).length / survivors.length * 100;
-                const sGP = sRoms.filter(v => v > 0).reduce((s,v) => s+v, 0);
-                const sGL = Math.abs(sRoms.filter(v => v < 0).reduce((s,v) => s+v, 0));
-                const sPf = sGL > 0 ? sGP / sGL : 99;
-                const sPlAvg = sPls.reduce((s,v) => s+v, 0) / survivors.length;
-                best = {{ lo, hi, n: survivors.length, avg: sAvg, net: sNet, retained, wr: sWr, pf: Math.min(sPf,99), pl: sPlAvg }};
-            }}
-        }}
-    }}
-    comboRefs[target] = best || {{ lo: minVal, hi: maxVal, n: N, avg: baselineRom, net: baselineNet, retained: 100, wr: baselineWr, pf: baselinePf, pl: baselinePl }};
-}}
-
-// ── Non-monotonic detection ─────────────────────────────────────────────
-const gtNonMono = {{}};
-for (const [target, ref] of Object.entries(gtRefs)) {{
-    const t = Number(target);
-    const dipped = threshData.some(d => d.t < ref.t && d.gtRetained < t);
-    if (dipped) gtNonMono[t] = true;
-}}
-const ltNonMono = {{}};
-for (const [target, ref] of Object.entries(ltRefs)) {{
-    const t = Number(target);
-    const dipped = threshData.some(d => d.t > ref.t && d.ltRetained < t);
-    if (dipped) ltNonMono[t] = true;
-}}
-const comboNonMono = {{}};
-for (const [target, ref] of Object.entries(comboRefs)) {{
-    const t = Number(target);
-    let dipped = false;
-    for (let i = 0; i < threshData.length; i++) {{
-        for (let j = i; j < threshData.length; j++) {{
-            const lo = threshData[i].t; const hi = threshData[j].t;
-            if (lo > ref.lo || hi < ref.hi) continue;
-            if (lo === ref.lo && hi === ref.hi) continue;
-            const survivors = raw.filter(r => r[0] >= lo && r[0] <= hi);
-            if (survivors.length < 1) continue;
-            const sNet = survivors.map(r => r[1]).reduce((s,v) => s+v, 0);
-            const retained = sNet / baselineNet * 100;
-            if (retained < t) {{ dipped = true; break; }}
-        }}
-        if (dipped) break;
-    }}
-    if (dipped) comboNonMono[t] = true;
-}}
+const gtRefs       = {gt_refs_json};
+const ltRefs       = {lt_refs_json};
+const comboRefs    = {combo_refs_json};
+const gtNonMono    = {gt_non_mono_json};
+const ltNonMono    = {lt_non_mono_json};
+const comboNonMono = {combo_non_mono_json};
 
 // ── OO Translation ──────────────────────────────────────────────────────
 {oo_js}
@@ -811,80 +1008,14 @@ const scatterChartObj = new Chart(scatterCtx, {{
     }}
 }});
 
-// ── Efficiency Frontier ─────────────────────────────────────────────────
-const gtCurve = threshData
-    .map(d => ({{x: d.gtRetained, y: d.gtRom, t: d.t, n: d.gtN}}))
-    .sort((a,b) => b.x - a.x);
-
-const ltCurve = threshData
-    .map(d => ({{x: d.ltRetained, y: d.ltRom, t: d.t, n: d.ltN}}))
-    .sort((a,b) => b.x - a.x);
-
-// Pre-compute ALL (lo, hi) pair stats once. The frontier and the target sweep
-// both consume these; avoids an O(targets × pairs × N) nested filter.
-const allPairs = [];
-{{
-    // Sort trades by filter value for O(1) range lookups via binary scanning.
-    const sortedTrades = raw.slice().sort((a,b) => a[0] - b[0]);
-    const sortedVals = sortedTrades.map(r => r[0]);
-    // For each (lo_idx, hi_idx) on the unique-threshold grid, extract survivors
-    // and aggregate. threshData is already sorted ascending by `t` (unique vals).
-    for (let i = 0; i < threshData.length; i++) {{
-        const lo = threshData[i].t;
-        // First sorted trade with value >= lo
-        let loStart = 0;
-        while (loStart < sortedVals.length && sortedVals[loStart] < lo) loStart++;
-        for (let j = i; j < threshData.length; j++) {{
-            const hi = threshData[j].t;
-            // Last sorted trade with value <= hi
-            let hiEnd = sortedVals.length;
-            while (hiEnd > 0 && sortedVals[hiEnd - 1] > hi) hiEnd--;
-            const n = hiEnd - loStart;
-            if (n < 1) continue;
-            let sNet = 0; let wins = 0; let gp = 0; let gl = 0; let plSum = 0;
-            for (let k = loStart; k < hiEnd; k++) {{
-                const rom = sortedTrades[k][1];
-                sNet += rom;
-                plSum += sortedTrades[k][2];
-                if (rom > 0) {{ wins++; gp += rom; }} else if (rom < 0) {{ gl -= rom; }}
-            }}
-            allPairs.push({{
-                lo, hi, n,
-                net: sNet,
-                retained: sNet / baselineNet * 100,
-                avg: sNet / n,
-                wr: wins / n * 100,
-                pf: gl > 0 ? Math.min(gp / gl, 99) : 99,
-                pl: plSum / n,
-            }});
-        }}
-    }}
-}}
-
-// Combo curve (efficiency frontier target sweep). For each retention target from
-// high (above 100 when dropping losers beats baseline) down to 0, find the pair
-// with max avg_rom meeting that constraint. 500% ceiling is a generous guard.
-const comboCurve = [];
-for (let target = 500; target >= 0; target -= 1) {{
-    let bestAvg = -999;
-    let best = null;
-    for (const p of allPairs) {{
-        if (p.retained < target) continue;
-        if (p.avg > bestAvg) {{
-            bestAvg = p.avg;
-            best = {{ x: p.retained, y: p.avg, lo: p.lo, hi: p.hi, n: p.n }};
-        }}
-    }}
-    if (best) comboCurve.push(best);
-}}
-const comboSeen = new Set();
-const comboDedupe = [];
-for (const p of comboCurve) {{
-    const key = p.x.toFixed(2) + '|' + p.y.toFixed(2);
-    if (!comboSeen.has(key)) {{ comboSeen.add(key); comboDedupe.push(p); }}
-}}
-comboDedupe.sort((a,b) => b.x - a.x);
-const comboCurveFinal = comboDedupe;
+// ── Efficiency Frontier (pre-computed) ──────────────────────────────────
+// gtCurve / ltCurve are sorted by retention descending. comboCurveFinal is the
+// Pareto front over all (lo, hi) threshold pairs — the server already walked
+// ~u²/2 pairs with prefix sums and kept only the (retention, avg) points that
+// strictly dominate.
+const gtCurve         = {gt_curve_json};
+const ltCurve         = {lt_curve_json};
+const comboCurveFinal = {combo_curve_json};
 
 const effCtx = document.getElementById('effChart').getContext('2d');
 // X axis upper bound: allow > 100% when dropping losers beats baseline.

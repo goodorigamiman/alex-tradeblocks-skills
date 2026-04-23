@@ -13,42 +13,16 @@ Personal skill pack extending the [TradeBlocks MCP server](https://github.com/da
 
 Then quit and relaunch Claude Code to activate.
 
-### Persist MCP approval
-
-So you don't have to click "approve" every session, add this to `~/.claude/settings.json`:
-
-```json
-"enabledMcpjsonServers": ["tradeblocks"]
-```
-
-(Replace `"tradeblocks"` with the key your project's `.mcp.json` uses if different.)
-
 ---
 
 ## Requirements
 
-- **[TradeBlocks MCP server](https://github.com/davidromeo/tradeblocks)** running via Docker compose in `$TB_ROOT/.mcp/`
-- **Docker Desktop** (or Docker Engine on Linux)
-- **Market data provider** — ThetaData (local daemon), Massive.com, or equivalent
+- **[TradeBlocks MCP server](https://github.com/davidromeo/tradeblocks)** running (Docker, Node, or any supported run method — see TB docs)
+- **Market data provider** — ThetaData (local daemon), Massive.com, TradingView (CSV import), or equivalent
 - **Python 3** with `duckdb`, `pandas`, `numpy`, `pyyaml`
-- **GitHub CLI (`gh`)** authenticated — only used by `alex-tradeblocks-startup` for plugin drift checks
 - **Option Omega CSV exports** imported into block folders
 
 No cross-plugin dependencies — every skill is self-contained.
-
-### Pre-flight checklist
-
-`alex-tradeblocks-startup` will check and auto-recover where it can, but a clean first run is easier with these in place:
-
-- [ ] **TradeBlocks MCP installed** — see [davidromeo/tradeblocks](https://github.com/davidromeo/tradeblocks). Creates `$TB_ROOT/.mcp/docker-compose.yml`, `$TB_ROOT/analytics.duckdb`, `$TB_ROOT/market.duckdb`.
-- [ ] **Claude Code MCP config** — `$TB_ROOT/.mcp.json` points to your MCP server.
-- [ ] **Environment file** — `$TB_ROOT/.env` has `MARKET_DATA_PROVIDER=thetadata` (or your provider) plus credentials.
-- [ ] **Docker Desktop installed**.
-- [ ] **Python deps**: `python3 -m pip install duckdb pandas numpy pyyaml`.
-- [ ] **GitHub CLI**: `gh auth login`.
-- [ ] **Market data provider daemon** (if applicable) — e.g. ThetaTerminal jar downloaded.
-
-You can run the startup skill even with an incomplete install — it tells you exactly what's missing.
 
 ---
 
@@ -62,7 +36,7 @@ You can run the startup skill even with an incomplete install — it tells you e
 
 | Skill | Purpose |
 |---|---|
-| `alex-tradeblocks-startup` | Health check at session start: MCP server, market provider, plugin drift (upstream vs cache), DuckDB liveness, market-data freshness, enrichment coverage. Auto-recovers Docker / market provider when possible. **Run this first in every session.** |
+| `alex-tradeblocks-startup` | Health check at session start: MCP server, market provider, plugin drift (upstream vs cache), DuckDB liveness, market-data freshness, enrichment coverage. Auto-recovers MCP server / market provider when possible. **Run this first in every session.** |
 | `alex-normalize-statistics` | Wraps `get_statistics` and renormalizes P&L + margin to per-contract terms; flags wide margin ranges that distort return-on-margin reporting. |
 
 ### Entry filter analysis
@@ -84,25 +58,6 @@ You can run the startup skill even with an incomplete install — it tells you e
 
 <!-- SKILLS-TABLE:END -->
 
-
----
-
-## Recommended daily workflow
-
-The single most important thing: **start Docker and let it fully initialize *before* launching Claude Code**. The MCP client is bootstrapped once at session start and doesn't retry — if Docker isn't up or the MCP container hasn't bound its port when Claude launches, the tools won't be available for that entire session.
-
-### The 3-step rhythm
-
-1. **Start Docker Desktop**. Wait for the icon to stop animating.
-2. **Confirm the MCP container is up** — `docker ps` should show `tradeblocks-mcp` as `Up` with the configured port bound (~30–60 seconds after Docker starts).
-3. **Launch Claude Code from your TradeBlocks Data root.** Run `/alex-tradeblocks:alex-tradeblocks-startup` as your first action — it verifies every layer and flags anything out of place.
-
-### Alternative: let the startup skill recover
-
-If you forgot and Claude is already running:
-1. Run `/alex-tradeblocks:alex-tradeblocks-startup`
-2. It auto-starts Docker, the MCP container, and the market provider if needed, and tells you to quit and relaunch Claude Code.
-3. Do that, and your next session will be fully mounted.
 
 ---
 
@@ -183,39 +138,6 @@ The final report is one compact block: status summary, `Upstream vs Installed:` 
 **To reset:** rename or delete `alex_tradeblocks_startup_config.md`. On the next run, first-run setup kicks in again.
 
 **The recovery log** (`alex_tradeblocks_startup_log.md`) is append-only and useful for spotting patterns ("Docker is always down at session start — set it to launch on login"). Trim or archive manually if it grows large.
-
----
-
-## Troubleshooting
-
-### MCP tools aren't showing up
-
-Symptom: startup says `session tools: NOT mounted — QUIT & RELAUNCH CLAUDE CODE`, or an MCP tool call fails with "tool not found".
-
-Root cause: Claude Code bootstrapped MCP servers at session start when Docker or the MCP container wasn't ready, OR `enabledMcpjsonServers` doesn't include the tradeblocks key.
-
-Fix:
-1. Add `"enabledMcpjsonServers": ["tradeblocks"]` to `~/.claude/settings.json`
-2. Confirm Docker is up and `tradeblocks-mcp` is running (`docker ps`)
-3. **Quit** Claude Code (Cmd+Q on Mac) and relaunch from your TB root. `/clear` / `/reset` inside the same session will not help — the MCP client only rebuilds on a fresh process.
-
-### Plugin shows DRIFT but files look fine
-
-Re-run the startup skill — the corrective for stale `installed_plugins.json` bookkeeping runs only when status is OK and rewrites the field to match the clone HEAD.
-
-### Market data is stale
-
-Confirm the prompt to update. The skill runs `python3 Scripts/update_market_data.py` which appends new bars via your provider + MCP imports and runs enrichment.
-
-### "DuckDB MISSING" on fresh install
-
-You haven't completed the TradeBlocks setup yet. Follow the install docs at https://github.com/davidromeo/tradeblocks to create the databases, then re-run the startup skill.
-
-### Docker won't auto-start
-
-- **macOS**: `open -a Docker` should work; if not, launch Docker Desktop manually.
-- **Linux**: the skill tries `systemctl start docker` which may require sudo.
-- **Windows**: launch Docker Desktop by hand.
 
 ---
 

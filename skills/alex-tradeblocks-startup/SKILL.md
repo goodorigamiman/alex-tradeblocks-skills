@@ -4,7 +4,7 @@ description: TradeBlocks startup check. Verifies MCP server, market data provide
 compatibility: Requires Docker. Market data provider (ThetaData, Massive, or other) and dev workspace layout are discovered from the local config — no assumptions baked in.
 metadata:
   author: alex-tradeblocks
-  version: 4.2.3
+  version: "4.2.3"
 ---
 
 # Dev TradeBlocks Startup

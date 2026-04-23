@@ -1,12 +1,17 @@
 ---
 name: alex-entry-filter-threshold-analysis
-description: 'Threshold analysis for a single entry filter on a block. Sweeps the filter across its unique values, computes retention references (99% through 50% of baseline Net ROR), and renders an interactive HTML chart with efficiency frontier, scatter, and OO filter translation. Reads only two block-local CSVs: entry_filter_data.csv and entry_filter_groups.*.csv. Never builds data — defers to alex-entry-filter-build-data. Filter labeling, ordering, and filter list all come from the groups CSV so the user can customize per-block by editing their local copy.
-
-  '
+description: >
+  Threshold analysis for a single entry filter on a block. Sweeps the filter
+  across its unique values, computes retention references (99% through 50% of baseline
+  Net ROR), and renders an interactive HTML chart with efficiency frontier, scatter,
+  and OO filter translation. Reads only two block-local CSVs: entry_filter_data.csv
+  and entry_filter_groups.*.csv. Never builds data — defers to alex-entry-filter-build-data.
+  Filter labeling, ordering, and filter list all come from the groups CSV so the user
+  can customize per-block by editing their local copy.
 compatibility: Requires Python 3 with numpy. No MCP. No DuckDB. No network.
 metadata:
   author: alex-tradeblocks
-  version: 4.0.3
+  version: "5.0.0"
 ---
 
 # Entry Filter Threshold Analysis
@@ -170,3 +175,8 @@ Each chart exposes a **pair** of number inputs (Low and High) rendered directly 
 - `alex-entry-filter-build-data` — upstream. Creates the two CSVs this skill reads.
 - `alex-entry-filter-heatmap` — all-filter retention view. Complements this skill's single-filter deep dive.
 - `alex-create-datelist` — generate OO-compatible datelists once a threshold decision is made.
+
+## Changelog
+
+- **5.0.0-dev** — Pre-compute all aggregates in Python, eliminating the O(u² × n) client-side combo sweep that hung the browser on large blocks (u ≈ 4,000, n ≈ 4,300). Browser now does only render work. Server-side math uses sorted-prefix sums (see `_compute_aggregates` in `gen_threshold_analysis.py`) and takes ~5-10s at u ≈ 2,000 pairs-worth of aggregation. Output: identical retention-reference numbers, chart layouts, and OO filter strings as 4.0.3. Efficiency-frontier combo curve is now a Pareto front (strict dominance) rather than a 501-step target sweep — same visual result, fewer redundant points. HTML size grows from ~150 KB to ~1.5 MB for large-n blocks because aggregated state is serialized inline; small-n blocks barely change.
+- **4.0.3-dev** — Previous client-side recomputation approach. Worked for filtered blocks (n ≤ 500) but hung on No-Filters blocks due to O(u² × n) JS loops.

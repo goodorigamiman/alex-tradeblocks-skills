@@ -1,12 +1,18 @@
 ---
 name: alex-entry-filter-build-data
-description: 'Build the shared entry_filter_data.csv for a block. Reads the filter groups registry (block-local override if present, else the shared default), pulls trade and market data via the TradeBlocks data layer, computes per-trade 1-lot economics (margin, premium, P/L, ROM%, PCR%), populates every filter column declared in the groups CSV, and enriches with market holiday proximity. Writes to {block}/alex-tradeblocks-ref/entry_filter_data.csv and reports which filter columns were populated vs skipped. Shared CSV for heatmap, pareto, parallel coords, threshold, and holiday enrichment skills.
-
-  '
+description: >
+  Build the shared entry_filter_data.csv for a block. Reads the filter groups
+  registry (block-local override if present, else the shared default), pulls trade and
+  market data via the TradeBlocks data layer, computes per-trade 1-lot economics
+  (margin, premium, P/L, ROM%, PCR%), populates every filter column declared in the
+  groups CSV, and enriches with market holiday proximity. Writes to
+  {block}/alex-tradeblocks-ref/entry_filter_data.csv and reports which filter columns
+  were populated vs skipped. Shared CSV for heatmap, pareto, parallel coords, threshold,
+  and holiday enrichment skills.
 compatibility: Requires TradeBlocks MCP server with trade data and market data loaded. Python 3 with pandas and duckdb.
 metadata:
   author: alex-tradeblocks
-  version: 1.1.0
+  version: "1.1.0"
 ---
 
 # Build Entry Filter Data CSV
