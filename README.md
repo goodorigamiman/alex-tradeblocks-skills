@@ -1,5 +1,11 @@
 # alex-tradeblocks-skills
 
+> **Note: This `legacy/tb-2x` branch is the final version compatible with TradeBlocks MCP server 2.x.**
+>
+> For TradeBlocks 3.0+, install from the `main` branch after upgrading your TradeBlocks MCP server (plugin v3.0.0+).
+>
+> This branch is frozen. No further feature work or version bumps will land here. Critical bug fixes may be backported at the maintainer's discretion.
+
 Personal skill pack extending the [TradeBlocks MCP server](https://github.com/davidromeo/tradeblocks) with an end-to-end entry-filter analysis pipeline for Option Omega backtests. Built for Claude Code (or any compatible MCP-skill harness).
 
 ---
