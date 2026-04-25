@@ -1,15 +1,15 @@
 ---
 name: alex-tradeblocks-startup
-description: TradeBlocks startup check. Verifies MCP server, market data provider, skills (published + local dev), and DuckDB databases. Auto-starts services if down. Reads `alex_tradeblocks_startup_config.md` in the TradeBlocks Data root for user-specific paths and settings; on first run, discovers values and writes the config. Use at session start or when TradeBlocks tooling feels broken.
-compatibility: Requires Docker. Market data provider (ThetaData, Massive, or other) and dev workspace layout are discovered from the local config — no assumptions baked in.
+description: TradeBlocks startup check (3.0 Parquet-mode aware). Verifies MCP server, market data provider, skills (published + local dev), analytics DuckDB, Parquet market data, enrichment, and optional SqueezeMetrics reference data. Status block splits Parquet and DuckDB into their own rows so each backend's health is visible at a glance. Always tail-ends the report with a Root Organization memory-refresher (database files, market Parquet layout, alex-data, dev workspace, MCP files) so the user re-anchors on the folder layout at session start. Auto-starts services if down. Reads `alex_tradeblocks_startup_config.md` in the TradeBlocks Data root for user-specific paths and settings; on first run, discovers values and writes the config. Use at session start or when TradeBlocks tooling feels broken.
+compatibility: Requires Docker + TradeBlocks MCP 3.0+ in Parquet mode. Market data probes route through the MCP (`run_sql` over registered views that read Parquet). Market data provider (ThetaData, Massive, or other) and dev workspace layout are discovered from the local config — no assumptions baked in.
 metadata:
   author: alex-tradeblocks
-  version: "4.2.3"
+  version: "5.2.0"
 ---
 
 # Dev TradeBlocks Startup
 
-Walk through the health checks in order (MCP server, market provider, skills inventory, DuckDB databases + data freshness + enrichment). For each: probe, report, and auto-recover if possible. Record recovery steps to `alex_tradeblocks_startup_log.md`. The skill is **config-driven**: on first run it discovers user-specific values and writes `alex_tradeblocks_startup_config.md`; on subsequent runs it reads that file first and uses the stored paths, provider choice, repo sources, etc.
+Walk through the health checks in order (MCP server, market provider, skills inventory, analytics DB + Parquet market views + freshness + enrichment + optional SqueezeMetrics). For each: probe, report, and auto-recover if possible. Record recovery steps to `alex_tradeblocks_startup_log.md`. The skill is **config-driven**: on first run it discovers user-specific values and writes `alex_tradeblocks_startup_config.md`; on subsequent runs it reads that file first and uses the stored paths, provider choice, repo sources, etc.
 
 ### Pulled-only vs dev modes
 
@@ -24,7 +24,7 @@ Nothing in the pulled-only path touches the dev folder, writes a registry, or as
 
 ## Step 0: Load (or Create) Local Config
 
-Look for `$TB_ROOT/alex_tradeblocks_startup_config.md` (where `$TB_ROOT` is the TradeBlocks Data root — typically the current working directory, or the nearest ancestor containing `analytics.duckdb` and `market.duckdb`).
+Look for `$TB_ROOT/alex_tradeblocks_startup_config.md` (where `$TB_ROOT` is the TradeBlocks Data root — typically the current working directory, or the nearest ancestor containing `database/analytics.duckdb`). Older 2.x installs had the DuckDB files at the root — for mixed-state machines, fall back to detecting root-level `analytics.duckdb` if the `database/` subfolder isn't present.
 
 ### If config exists
 
@@ -48,7 +48,7 @@ Detect the following by probing, then present the detected values to the user an
 
 | Key | How to detect |
 |---|---|
-| `tb_root` | Directory containing `analytics.duckdb` and `market.duckdb` |
+| `tb_root` | Directory containing `database/analytics.duckdb` (3.0 canonical). Fall back to a directory containing root-level `analytics.duckdb` for mixed-state machines mid-migration. |
 | `dev_skills_folder` | Look for a folder in `$TB_ROOT` matching `Dev-*Skills*`, `*-dev-skills`, or similar. If multiple or none, ask the user. Store as a path relative to `tb_root`, or absolute if outside. Set to `none` if the user has no local dev workspace. |
 | `market_provider` | Read `$TB_ROOT/.env` for `MARKET_DATA_PROVIDER`. Common values: `thetadata`, `massive`, `polygon`. If unset, ask the user. |
 | `market_provider_endpoint` | Read `.env` for the provider-specific URL (e.g. `THETADATA_BASE_URL`, `MASSIVE_API_URL`). For cloud APIs with only a key (no URL), store `cloud`. |
@@ -58,7 +58,7 @@ Detect the following by probing, then present the detected values to the user an
 | `mcp_container_name` | Read `$TB_ROOT/.mcp/docker-compose.yml` — grep `container_name:` |
 | `mcp_compose_dir` | `.mcp` (relative to `tb_root`) |
 | `plugin_marketplaces` | Parse `~/.claude/plugins/installed_plugins.json` — each plugin id → its `extraKnownMarketplaces` entry in `~/.claude/settings.json` has the GH repo |
-| `legacy_tables_ignore` | Ask the user if they have any tables in `market.duckdb` that show stale dates but are known deprecated. Default empty. |
+| `legacy_tables_ignore` | Safety net for the analytics side. Ask if any tables in `database/analytics.duckdb` are known deprecated and should be suppressed from the "Possibly stale" flag in Step 4A. Default empty. Market-side legacy tables were dropped by 3.0 on first open and are not probed. |
 
 Write the result to `$TB_ROOT/alex_tradeblocks_startup_config.md` using the schema in the Config Schema section below.
 
@@ -86,7 +86,8 @@ Report each missing dep explicitly. Do not continue with a dep missing if the sk
 ### Fresh-install detection
 
 If **any** of these are missing on first run, mark the install as "incomplete" and surface a short checklist before proceeding:
-- `$TB_ROOT/analytics.duckdb` / `$TB_ROOT/market.duckdb` → databases not created yet
+- `$TB_ROOT/database/analytics.duckdb` (3.0 canonical) OR `$TB_ROOT/analytics.duckdb` (legacy root) → trades DB not created yet
+- `$TB_ROOT/market/` → Parquet market data root not created yet (expected once `refresh_market_data` has run at least once)
 - `$TB_ROOT/.mcp/docker-compose.yml` → MCP server not installed
 - `$TB_ROOT/.mcp.json` → MCP client config not created
 - `$TB_ROOT/.env` → environment not configured
@@ -165,6 +166,106 @@ If Layer B shows the MCP tools aren't attached to this session, emit this messag
 Offer to apply the `enabledMcpjsonServers` edit if it's missing — but **do not** attempt to relaunch Claude Code yourself (and never suggest a computer restart).
 
 **Report:** MCP image tag (from config), container status, HTTP probe result, `.mcp.json` presence, approval state, tool-call probe result, recovery actions taken. Be explicit about whether tools are mounted *in this session* — don't conflate container health with tool availability.
+
+### Layer C — Multi-server inventory (added 2026-04-25)
+
+The user may have **multiple MCP servers** configured in `.mcp.json` — typically a baseline (prod npm-published, in Docker) plus one or more dev variants (host-process running from a fork). Layers A + B above probe ONE server (the baseline from config). This layer enumerates ALL configured servers and reports each.
+
+For each entry in `mcp_json["mcpServers"]`:
+
+```python
+import json, pathlib, re, subprocess
+mcp_json = json.loads((tb_root / ".mcp.json").read_text())
+servers_report = []
+for key, cfg in mcp_json["mcpServers"].items():
+    # Extract URL + port from the server config (mcp-remote arg or url field)
+    url = cfg.get("url") or next((a for a in cfg.get("args", []) if a.startswith("http")), None)
+    port = int(re.search(r":(\d+)", url).group(1)) if url else None
+
+    # Determine kind: container or host process
+    container = subprocess.run(
+        ['docker','ps','--filter',f'publish={port}','--format','{{.Names}}|{{.Image}}|{{.Status}}'],
+        capture_output=True, text=True).stdout.strip()
+    if container:
+        name, image, status = container.split("|", 2)
+        kind = "container"
+        version_tag = image.rsplit(":", 1)[-1]   # e.g. "3.0.0-beta.2"
+        version_str = version_tag
+        process_info = f"container {name} · {status}"
+    else:
+        # No container on this port — assume host process
+        proc = subprocess.run(
+            ['lsof','-iTCP:'+str(port),'-sTCP:LISTEN','-P','-n','-Fpc'],
+            capture_output=True, text=True).stdout
+        # Parse lsof Fpc format: -p<pid>\n-c<command>
+        pid = re.search(r'^p(\d+)', proc, re.MULTILINE)
+        if pid:
+            kind = "host"
+            # If we know dev MCP source dir, read its package.json + git state
+            dev_repo = pathlib.Path.home() / "Developer/tradeblocks"
+            if dev_repo.exists():
+                pkg = json.loads((dev_repo / "packages/mcp-server/package.json").read_text())
+                pkg_ver = pkg.get("version", "unknown")
+                sha = subprocess.check_output(['git','-C',str(dev_repo),'rev-parse','--short','HEAD']).decode().strip()
+                branch = subprocess.check_output(['git','-C',str(dev_repo),'rev-parse','--abbrev-ref','HEAD']).decode().strip()
+                version_str = f"{pkg_ver} (host: {branch}@{sha})"
+            else:
+                version_str = "host process · source unknown"
+            process_info = f"PID {pid.group(1)}"
+        else:
+            kind = "missing"
+            version_str = "—"
+            process_info = "NOT RUNNING"
+
+    # Health probe
+    code = subprocess.run(
+        ['curl','-s','-m','3','-o','/dev/null','-w','%{http_code}', url],
+        capture_output=True, text=True).stdout.strip()
+    healthy = code in ('405', '200')
+
+    # Designate baseline vs variant. The "baseline" is the prod container
+    # named in config (mcp_container_name). Anything else is a dev variant.
+    is_baseline = (kind == "container" and name == config.get('mcp_container_name'))
+
+    servers_report.append({
+        'key': key, 'kind': kind, 'version': version_str, 'healthy': healthy,
+        'http_code': code, 'process_info': process_info, 'port': port,
+        'is_baseline': is_baseline,
+    })
+```
+
+**Report inline in the main report as `MCP servers:` with five columns:**
+
+```
+MCP servers:
+  Key                Kind        Version                                          Process                Status
+  tradeblocks        container   3.0.0-beta.2                                     container tradeblocks-mcp · Up 18h    :3100 · 405 · BASELINE
+  tradeblocks-dev    host        3.0.0-beta.2 (host: feat/tradeblocks-3.0@c602309) PID 32806              :3101 · 405 · dev variant
+```
+
+Column rules:
+- **Key**: server entry name in `.mcp.json`.
+- **Kind**: `container` (Docker), `host` (Node process on host), `missing` (configured but not running).
+- **Version**: for containers, the image tag (e.g. `3.0.0-beta.2`); for host processes, `<package.json version> (host: <branch>@<sha>)`. The git context makes "which fork/branch the dev MCP was built from" auditable.
+- **Process**: container name + `Up <time>` for containers; `PID <n>` for host; `NOT RUNNING` for missing.
+- **Status**: `<port> · <http_code> · BASELINE | dev variant`. `BASELINE` is loud-uppercase to signal "this is the user's prod"; `dev variant` is lowercase / quieter.
+
+**Baseline upstream-update check**: only for the BASELINE server, additionally compare the installed image tag against `npm registry tradeblocks-mcp` (latest + beta dist-tags) and report:
+- `tracking npm latest` if installed matches `dist-tags.latest` (and isn't a beta).
+- `tracking npm beta` if installed matches `dist-tags.beta`.
+- `outdated — npm latest is X.Y.Z, beta is A.B.C` if installed is older than both.
+- `npm has a newer version (X.Y.Z available)` if a newer one exists in the channel the user is on.
+
+If a newer version is available in the user's tracked channel, append a one-line suggestion:
+```
+→ Run `/dev pipeline-update` (or `dev-tradeblocks-pipeline-update`) to bump prod to <new_version>.
+```
+
+This is the cross-reference to the pipeline-update skill — the canonical path for updating prod versions.
+
+**Dev variants do NOT get the npm-update flag.** Their version is whatever the fork's source is; "outdated" is meaningless without knowing what the user intended.
+
+**Missing servers** (entry in `.mcp.json` but no process on the port): report as `NOT RUNNING` and suggest the recovery path. For dev variants whose source is `~/Developer/tradeblocks/`, suggest `~/Developer/run-dev-mcp.sh`. For the baseline, suggest `cd <TB_ROOT>/.mcp && docker compose up -d`.
 
 ---
 
@@ -361,85 +462,104 @@ Registry lives in `$TB_ROOT/CLAUDE.md` (not the skill folder) so it survives ski
 
 ---
 
-## Step 4: DuckDB Databases
+## Step 4: Databases & Market Data
 
-### 4A. Liveness & Table Inventory
+In TB 3.0 Parquet mode, trades still live in DuckDB (`database/analytics.duckdb`) but market data is in Parquet partitions under `market/`. The legacy `database/market.duckdb` file is frozen post-migration — **this skill does not probe it**. Market-side inventory and freshness go through the MCP's registered views (`market.spot`, `market.spot_daily`, `market.enriched`, `market.enriched_context`, `market.option_chain`, `market.option_quote_minutes`), which read the Parquet files on demand.
 
-**Liveness probe** (read-only, safe):
+### 4A. Liveness & Inventory
+
+**Analytics DuckDB liveness** (read-only, direct Python):
 
 ```python
 import duckdb, pathlib
-for path in ['{tb_root}/analytics.duckdb', '{tb_root}/market.duckdb']:
-    p = pathlib.Path(path)
-    if not p.exists():
-        print(path, 'MISSING — fresh install? Database not yet created.')
-        continue
+path = pathlib.Path('{tb_root}/database/analytics.duckdb')
+if not path.exists():
+    # Fall back to legacy root location for mixed-state machines
+    legacy = pathlib.Path('{tb_root}/analytics.duckdb')
+    if legacy.exists():
+        print('analytics.duckdb found at legacy root location — 3.0 migration not completed for this file')
+        path = legacy
+    else:
+        print('analytics.duckdb MISSING — fresh install? Database not yet created.')
+else:
     try:
-        with duckdb.connect(path, read_only=True) as con:
+        with duckdb.connect(str(path), read_only=True) as con:
             con.execute('SELECT 1').fetchone()
             print(path, 'OK')
     except Exception as e:
         print(path, 'ERROR', str(e)[:200])
 ```
 
-**Three distinct states, different handling:**
-- **MISSING**: DB file doesn't exist at the configured path. Likely a fresh install or the user moved the file. Do not auto-create; prompt user to verify path in config or run TradeBlocks install.
-- **LOCKED/ERROR**: DB exists but can't be opened read-only (typically: another process holds the write lock, or the file is corrupt). Do NOT force-kill or delete. Report the error verbatim and ask the user.
+**Three distinct states:**
+- **MISSING**: DB file doesn't exist. Likely a fresh install or the user moved the file. Do not auto-create; prompt the user to verify path in config or run the TradeBlocks install.
+- **LOCKED/ERROR**: DB exists but can't be opened read-only (another process holds the write lock, or the file is corrupt). Do NOT force-kill or delete. Report verbatim and ask the user.
 - **OK**: proceed with inventory.
 
-**Table inventory** — for each database, list all schemas and tables with row count, latest date (if date column exists), and status. Use read-only Python connections:
+**Analytics table inventory** — list `trades.*` and `profiles.*` tables in `database/analytics.duckdb` with row counts. Use a read-only Python connection. Status classification:
 
-```python
-import duckdb
-for db_name, db_path in [('analytics', '{tb_root}/analytics.duckdb'), ('market', '{tb_root}/market.duckdb')]:
-    with duckdb.connect(db_path, read_only=True) as con:
-        # Query information_schema for all tables, row counts, and max date
-        ...
+- **Active**: populated and maintained
+- **Empty**: exists but has 0 rows
+- **Internal**: `_`-prefixed operational tables (e.g. `_sync_metadata`)
+
+**Market data inventory (Parquet, via MCP)** — call `mcp__tradeblocks__run_sql` once per canonical view. **Do NOT combine into one UNION ALL query** — empty Parquet-backed views (common for `option_chain` / `option_quote_minutes` before `fetch_chain` / `fetch_quotes` has run) throw a Catalog Error that aborts the whole UNION. Per-view queries let you catch the error and report that view as Empty.
+
+```sql
+SELECT COUNT(*) AS rows, COUNT(DISTINCT ticker) AS tickers, MAX(date) AS latest
+FROM market.spot_daily;
+
+SELECT COUNT(*) AS rows, COUNT(DISTINCT ticker) AS tickers, MAX(CAST(date AS DATE)) AS latest
+FROM market.enriched;
+
+SELECT COUNT(*) AS rows, MAX(CAST(date AS DATE)) AS latest
+FROM market.enriched_context;
+
+-- And similarly for market.option_chain, market.option_quote_minutes
+-- Catch "Catalog Error: Table with name X does not exist" → report view as Empty (no Parquet files yet)
 ```
-
-**Status classification per table:**
-- **Active**: table is populated and being updated by the daily pipeline (latest date is recent)
-- **Active (derived)**: `_`-prefixed tables that are actively maintained and queried (e.g. `_context_derived`). These are derived/enrichment tables — distinguish from raw-data tables but treat as active.
-- **Superseded**: table exists but is no longer updated — listed in `legacy_tables_ignore` from config, or latest date is frozen well behind active tables. Mark with the reason (e.g. "migrated to daily + _context_derived on 2026-03-26")
-- **Empty**: table exists but has 0 rows (schema placeholder, not yet populated)
-- **Internal**: `_`-prefixed tables that are purely operational and not queried for analysis (e.g. `_sync_metadata`)
 
 **Output format:**
 
 ```
-DuckDB table inventory:
-  analytics.duckdb:
-    Schema     Table               Rows    Latest       Status
-    profiles   strategy_profiles      1    --           Active
-    trades     trade_data        19,976    --           Active
-    trades     reporting_data        88    --           Active
-    trades     _sync_metadata        13    --           Internal
+Database inventory:
+  analytics.duckdb (database/):
+    Schema     Table               Rows    Status
+    profiles   strategy_profiles      1    Active
+    trades     trade_data        19,976    Active
+    trades     reporting_data        88    Active
+    trades     _sync_metadata        13    Internal
 
-  market.duckdb:
-    Schema     Table               Rows    Latest       Status
-    market     daily             32,312    2026-04-14   Active
-    market     _context_derived   5,123    2026-04-14   Active (derived)
-    market     intraday         708,238    2026-04-14   Active
-    market     context            5,089    2026-03-25   Superseded (migrated to daily + _context_derived)
-    market     _sync_metadata       961    --           Internal
-    market     data_coverage          0    --           Empty
-    market     option_chain           0    --           Empty
+  market/ (Parquet via MCP views):
+    View                       Rows      Tickers   Latest       Status
+    spot_daily                 12,016    8         2026-04-22   Active
+    enriched                        0    0         --           Empty (pending enrich_market_data)
+    enriched_context                2    --        2026-04-22   Active
+    option_chain                    0    --        --           Empty
+    option_quote_minutes            0    --        --           Empty
 ```
 
-Cross-reference `legacy_tables_ignore` from config to label superseded tables. If a table not in the ignore list has a latest date far behind the active tables, flag it as **Possibly stale** and ask the user whether it should be added to `legacy_tables_ignore`.
+**Status logic for market views:**
+- **Active**: `rows > 0` and `latest` is recent
+- **Empty**: `rows = 0` (view registered but no data yet — common for `option_chain` / `option_quote_minutes` until the user runs `fetch_chain` / `fetch_quotes`)
+- **Stale**: `rows > 0` but `latest` is far behind expected (covered in Step 4B + 4C with the per-ticker detail)
+
+The `legacy_tables_ignore` config key is kept for analytics-side safety (surfaces any deprecated analytics tables the user still wants suppressed). It no longer applies to market data — legacy market tables were dropped by 3.0 on first open.
 
 ### 4B. Market Data Freshness
 
-**Query** via read-only Python or MCP `run_sql`:
+Route all queries through `mcp__tradeblocks__run_sql`. Market data in 3.0 Parquet mode is accessed via the MCP's registered views over Hive-partitioned Parquet — direct Python file I/O against `database/market.duckdb` is meaningless (that file is frozen post-migration).
+
+**Query — per-ticker daily coverage via `market.spot_daily`:**
 
 ```sql
-SELECT ticker, COUNT(*) AS n, MIN(date) AS earliest, MAX(date) AS latest
-FROM market.daily GROUP BY ticker ORDER BY ticker;
-
-SELECT COUNT(*) AS n, MAX(date) AS latest FROM market._context_derived;
+SELECT ticker, COUNT(DISTINCT date) AS n, MIN(date) AS earliest, MAX(date) AS latest
+FROM market.spot_daily GROUP BY ticker ORDER BY n DESC;
 ```
 
-**Skip any tables listed in `legacy_tables_ignore` from config** — those are known-deprecated and are expected to show stale dates.
+**Query — regime-context coverage via `market.enriched_context`** (note: `date` in this view is VARCHAR, cast before comparing):
+
+```sql
+SELECT COUNT(*) AS n, MAX(CAST(date AS DATE)) AS latest FROM market.enriched_context;
+```
 
 **Staleness check:** compute the expected latest date as the most recent past weekday (yesterday if yesterday was a weekday, otherwise last Friday). If any ticker's latest date is behind the expected date, the data is stale.
 
@@ -448,99 +568,167 @@ SELECT COUNT(*) AS n, MAX(date) AS latest FROM market._context_derived;
 ```
 Market data coverage:
   Ticker   Rows     Earliest      Latest
-  SPX      13,393   1973-03-05    2026-04-14
-  QQQ      5,101    2006-01-03    2026-04-14
-  VIX      5,123    2006-01-03    2026-04-14
-  VIX3M    4,553    2008-01-03    2026-04-14
-  VIX9D    3,118    2013-11-18    2026-04-14
-  IWM      512      2024-03-28    2026-04-14
-  SPY      512      2024-03-28    2026-04-14
-  _context_derived: 5,123 rows through 2026-04-14
+  SPX      1,571    2022-01-03    2026-04-22
+  VIX      1,571    2022-01-03    2026-04-22
+  VIX3M    1,571    2022-01-03    2026-04-22
+  VIX9D    1,571    2022-01-03    2026-04-22
+  IWM      1,571    2022-01-03    2026-04-22
+  QQQ      1,459    2022-01-03    2025-12-31
+  SPY      1,282    2022-01-03    2025-10-07
+  VIX1D    1,095    2023-04-24    2026-04-22
+
+  enriched_context: 2 rows through 2026-04-22
 ```
 
 Column rules:
-- **Ticker** — symbol as stored in `market.daily`.
-- **Rows** — `COUNT(*)` for that ticker. Use thousands separators (`13,393` not `13393`).
+- **Ticker** — symbol as stored in `market.spot` (ticker partition key).
+- **Rows** — `COUNT(DISTINCT date)` for that ticker (trading days covered, not minute-bar rows). Use thousands separators (`1,571` not `1571`).
 - **Earliest / Latest** — `MIN(date)` and `MAX(date)` in ISO format.
-- **No Status column.** Staleness is conveyed by the summary `[✓|✗] Market Data` line at the top of the report (e.g. `market: 2026-04-14 (current)` or `market: 2026-04-14 (stale — update to 2026-04-15?)`). The ticker table stays clean.
+- **No Status column.** Staleness is conveyed by the summary `[✓|✗] Market Data` line at the top of the report (e.g. `market: 2026-04-22 (current)` or `market: 2026-04-22 (stale — update to 2026-04-23?)`). The ticker table stays clean.
 
 Ordering: sort by **Rows DESC** (longest-history tickers first — correlates with earliest start date, which is what readers usually scan for first). Not alphabetical.
 
-After the ticker rows, emit **`_context_derived`** as an indented closing line (not a separate section). Use the same 2-space indent as the table rows so it reads as part of the coverage block: `  _context_derived: {N:,} rows through {max_date}`.
+After the ticker rows, emit **`enriched_context`** as an indented closing line (not a separate section). Use the same 2-space indent as the table rows so it reads as part of the coverage block: `  enriched_context: {N:,} rows through {max_date}`.
 
 **Do not replace this table with a summary sentence**, even when every ticker is current. Readers use the earliest column to spot newly added tickers and uneven start dates; that information vanishes in a one-line summary.
 
-**Staleness prompt:** if latest date is behind the expected date, prompt with specific dates: *"Market data latest is YYYY-MM-DD. Update through YYYY-MM-DD (yesterday)?"* Do not auto-run — wait for user confirmation. If user confirms, run `python3 Scripts/update_market_data.py`.
+**Staleness prompt:** if latest date is behind the expected date, prompt with specific dates: *"Market data latest is YYYY-MM-DD. Update through YYYY-MM-DD (yesterday)?"* Do not auto-run — wait for user confirmation. If user confirms, call the `refresh_market_data` MCP tool with `asOf = YYYY-MM-DD` and the project's standard spot/chain/quote universe (see CLAUDE.md's "Standard refresh universe" section) — auto-enriches and auto-computes VIX context. The retired `Scripts/update_market_data.py` + `Scripts/run_mcp_update.py` scripts were removed in the 3.0 migration.
 
 ### 4C. Calculated Fields Health Check
 
 After the ticker coverage table, verify that enriched/derived columns are fully populated and current. This catches enrichment failures, partially-enriched tickers, or new tickers that were imported but never enriched.
 
-**Enriched columns to check — detect dynamically:**
+**In 3.0, enrichment lives in two views** (both backed by Parquet under `market/enriched/`):
+- `market.enriched` — per-ticker indicator columns (RSI_14, ATR_Pct, Return_5D, etc.)
+- `market.enriched_context` — cross-ticker regime columns (Vol_Regime, Term_Structure_State, VIX_Spike_Pct, etc.)
 
-Do NOT hardcode column lists. Instead, query the schema and exclude the known raw OHLCV columns:
+Neither view contains raw OHLCV — that's in `market.spot_daily`. So there's no "raw vs enriched" split to do inside these views; every non-key column is an enriched field.
 
-```python
-RAW_COLUMNS = {'ticker', 'date', 'open', 'high', 'low', 'close'}
+**Enriched columns to check — detect dynamically via MCP `run_sql`:**
 
-# For market.daily:
-all_cols = con.execute("SELECT column_name FROM information_schema.columns WHERE table_name='daily'").fetchall()
-enriched_daily = [c[0] for c in all_cols if c[0] not in RAW_COLUMNS]
+```sql
+-- Per-ticker indicators (exclude key columns)
+SELECT * FROM (DESCRIBE market.enriched);
 
-# For _context_derived:
-all_cols = con.execute("SELECT column_name FROM information_schema.columns WHERE table_name='_context_derived'").fetchall()
-enriched_ctx = [c[0] for c in all_cols if c[0] != 'date']
+-- Cross-ticker regime (exclude key column)
+SELECT * FROM (DESCRIBE market.enriched_context);
 ```
 
-This ensures new enrichment columns are automatically checked without updating the skill.
+Parse the returned column list, drop key columns:
+- `market.enriched` key cols to drop: `ticker`, `date`
+- `market.enriched_context` key cols to drop: `date`
+
+Every remaining column is an enriched field to check. This keeps the skill agnostic to schema drift as TB evolves.
 
 **Enrichment tickers — detect dynamically:**
 
-Do NOT hardcode the ticker list. Instead, identify which tickers have enriched data by sampling:
-
-```python
-# Pick the first enriched column from market.daily
-sample_col = enriched_daily[0]
-enrichment_tickers = con.execute(f"""
-    SELECT DISTINCT ticker FROM market.daily
-    WHERE "{sample_col}" IS NOT NULL
-    ORDER BY ticker
-""").fetchall()
-enrichment_tickers = [t[0] for t in enrichment_tickers]
+```sql
+SELECT DISTINCT ticker FROM market.enriched ORDER BY ticker;
 ```
 
-Index-only tickers (VIX, VIX3M, VIX9D, etc.) will naturally be excluded because they have NULL enriched columns.
+Returns tickers that have at least one enriched row. Index-only tickers where enrichment can't produce meaningful values (e.g. VIX1D pre-warm-up) will simply not appear.
 
-**SQL approach** — build per-column `MAX(CASE WHEN col IS NOT NULL THEN date END)` dynamically from the `enr_daily` / `enr_ctx` lists above, one query per (ticker, table) for `market.daily` and one query for `_context_derived`. Do NOT hardcode column names — they drift as enrichment evolves.
+**Staleness SQL — per (ticker, column) against `market.enriched`:**
+
+Build dynamically from the column list. Note that `date` in both enriched views is VARCHAR — cast before comparing/max-ing:
+
+```sql
+SELECT ticker,
+       MAX(CAST(date AS DATE)) AS max_raw,
+       MAX(CASE WHEN "<col>" IS NOT NULL THEN CAST(date AS DATE) END) AS max_enriched
+FROM market.enriched
+GROUP BY ticker;
+```
+
+And for context:
+
+```sql
+SELECT MAX(CAST(date AS DATE)) AS max_date,
+       MAX(CASE WHEN Vol_Regime IS NOT NULL THEN CAST(date AS DATE) END) AS Vol_Regime_latest,
+       ...
+FROM market.enriched_context;
+```
 
 **Status logic per field:**
-- **Current**: latest non-null date == max date for that ticker/table
+- **Current**: latest non-null date equals the ticker's max date in that view
 - **Stale**: latest non-null date < max date (enrichment lagging behind raw data)
-- **Empty**: all values are NULL (enrichment never ran for this field)
+- **Empty**: all values are NULL (enrichment never ran for this field — or the view itself is empty, which is a common post-backfill state until `enrich_market_data` is called)
 
 **Output format — compact unless issues found:**
 
 When all fields are current:
 ```
 Calculated fields:
-  market.daily:            28 enriched fields · all current through 2026-04-14
-  market._context_derived:  5 enriched fields · all current through 2026-04-14
+  market.enriched:          28 enriched fields · all current through 2026-04-22
+  market.enriched_context:   5 enriched fields · all current through 2026-04-22
 ```
 
-When issues exist, expand only the problem fields:
+When the enrichment table is fully empty (e.g. right after a bulk backfill):
 ```
 Calculated fields:
-  market.daily:            28 enriched fields · 26 current · 2 STALE:
+  market.enriched:          EMPTY (0 rows — run enrich_market_data to populate)
+  market.enriched_context:   5 enriched fields · all current through 2026-04-22
+```
+
+When partial issues exist, expand only the problem fields:
+```
+Calculated fields:
+  market.enriched:          28 enriched fields · 26 current · 2 STALE:
     ivr   (SPY): latest non-null 2026-04-10 (4 bdays behind)
     ivp   (SPY): latest non-null 2026-04-10 (4 bdays behind)
-  market._context_derived:  5 enriched fields · all current through 2026-04-14
+  market.enriched_context:   5 enriched fields · all current through 2026-04-22
 ```
 
 **Enrichment staleness prompt:** if any calculated fields are STALE (not EMPTY — empty fields are a schema/pipeline gap to report, not something the update script fixes), prompt: *"Calculated fields are behind raw data (latest enriched: YYYY-MM-DD, latest raw: YYYY-MM-DD). Re-run enrichment?"* Do not auto-run — wait for user confirmation. If user confirms, run `enrich_market_data` via the MCP tool for each affected ticker.
 
-Note: EMPTY fields (e.g. ivr/ivp that have never been populated) should be reported as a gap but not offered for re-run — they indicate a pipeline limitation, not a stale-data problem.
+Note: EMPTY fields (e.g. ivr/ivp that have never been populated, or the whole view being empty after a skip-enrichment backfill) should be reported as a gap but not offered for staleness re-run — they indicate a pipeline state, not stale-data-needing-refresh. If the whole `market.enriched` view is empty, the suggestion should be: *"Market.enriched is empty. Run `enrich_market_data` per ticker to populate from the cached spot data?"*
 
-**Report:** per-ticker coverage table, table inventory, calculated fields check, staleness prompts (market data + enrichment) if applicable.
+### 4D. SqueezeMetrics Data Freshness
+
+Covers user-added SqueezeMetrics DIX/GEX data under `alex-data/squeezemetrics/data.parquet`, maintained by the `alex-squeezemetrics-update-data` skill. Optional — some users don't track this dataset.
+
+**Preflight — skip gracefully:** If `$TB_ROOT/alex-data/.sync-meta.json` does not exist, skip this entire step silently. Do not emit anything to the report. Do not emit the Status-line row in the Final Summary. The user hasn't opted into this dataset.
+
+**Probe:** read `$TB_ROOT/alex-data/.sync-meta.json`, extract the `squeezemetrics` key (if present). Required sub-fields: `latest_date` (ISO date), `last_refresh` (ISO timestamp), `row_count`.
+
+If the `squeezemetrics` key is missing from the JSON but the file exists, treat as "watermark corrupt" — report the gap, do not prompt for refresh (user should investigate manually).
+
+**Staleness rule:** *"More than 1 trading day behind expected latest."* Compute expected latest the same way as Step 4B (most recent past weekday). If `(expected_latest − latest_date)` spans more than one trading day, flag **STALE**. Exactly one trading day behind is NOT stale — SqueezeMetrics publishes with a real-world lag and zero-day-behind is rare.
+
+Helper logic (pseudo-code):
+```python
+import datetime
+def trading_days_between(earlier, later):
+    # Count weekdays strictly between the two dates (exclusive of `earlier`, inclusive of `later`)
+    d = earlier
+    n = 0
+    while d < later:
+        d += datetime.timedelta(days=1)
+        if d.weekday() < 5:  # Mon-Fri
+            n += 1
+    return n
+
+behind = trading_days_between(latest_date, expected_latest)
+is_stale = behind > 1
+```
+
+**Output — always emit when the dataset exists**, inline in the main report as a closing block after the `Market data coverage:` section:
+
+```
+SqueezeMetrics: latest 2026-04-22 · 3,766 rows · last refresh 2026-04-23T15:42 ET
+```
+
+When stale:
+
+```
+SqueezeMetrics: latest 2026-04-20 · 3,764 rows · last refresh 2026-04-21T09:15 ET  (2 trading days behind)
+```
+
+**Staleness prompt (only when `is_stale` is true):** *"SqueezeMetrics data latest is YYYY-MM-DD (N trading days behind). Refresh to YYYY-MM-DD?"* Do not auto-run — wait for user confirmation. If user confirms, invoke the `alex-squeezemetrics-update-data` skill (trigger phrase: *"update squeezemetrics data"*). The skill knows where its driver script lives — no need to invoke a literal path here.
+
+The refresh skill is self-contained — it fetches from squeezemetrics.com, appends new rows to the canonical CSV at `_shared/DIX-3.csv`, rewrites the Parquet mirror, and updates the watermark in `alex-data/.sync-meta.json`. On its next invocation this step will see the new `latest_date` and report current.
+
+**Report:** per-ticker coverage table, market inventory, calculated fields check, SqueezeMetrics freshness, staleness prompts (market data + enrichment + SqueezeMetrics) if applicable.
 
 ---
 
@@ -554,10 +742,13 @@ Emit the report as **markdown with explicit section headers and blank lines betw
 ### Status
 
 ```
-[✓|✗] MCP Server        {image_tag}  · container: <up|down>  · session tools: <mounted|NOT mounted — QUIT & RELAUNCH CLAUDE CODE>
-[✓|✗] Market Provider   {provider}  · <status> (<endpoint>)
-[✓|✗] Skills            <OK|DRIFT>  [· dev: N skills (K unpublished edits)]
-[✓|✗] DuckDB            market: <date> (<current|stale>)  · analytics: OK  [· enrichment STALE]
+[✓|✗] MCP Servers        {N} mounted ({P} prod · {D} dev) · baseline {image_tag} {tracking-channel} {· upstream-update-available}
+                          · session tools: <mounted|NOT mounted — QUIT & RELAUNCH CLAUDE CODE>
+[✓|✗] Market Provider    {provider}  · <status> (<endpoint>)
+[✓|✗] Skills             <OK|DRIFT>  [· dev: N skills (K unpublished edits)]
+[✓|✗] Parquet            market: <date> (<current|stale>)  [· enrichment STALE|EMPTY]
+[✓|✗] DuckDB             analytics: OK  [· {N} active · {K} empty]
+[✓|✗] SqueezeMetrics     latest: <date>  · <current|stale — N trading days behind>     # omit row entirely if alex-data/.sync-meta.json doesn't exist
 ```
 
 ### Upstream vs Installed
@@ -568,6 +759,23 @@ tradeblocks-skills         GitHub davidromeo/tradeblocks-skills             {sha
 alex-tradeblocks-skills    GitHub {owner}/{repo}                            {sha}      {sha}        {OK|…}
 tradeblocks-mcp            npm registry (tradeblocks-mcp)                   {ver}      {ver}        {OK|…}
 ```
+
+### MCP Servers
+
+```
+Key                Kind        Version                                          Process                      Status
+tradeblocks        container   {image_tag}                                      container {name} · Up {time}  :{port} · {http} · BASELINE
+tradeblocks-dev    host        {pkg_ver} (host: {branch}@{sha})                 PID {pid}                     :{port} · {http} · dev variant
+...
+```
+
+When the baseline has an upstream update available, append a one-liner under the table:
+
+```
+→ Run `/dev pipeline-update` (or `dev-tradeblocks-pipeline-update`) to bump prod from {installed} to {available}.
+```
+
+(Section always emitted. Multi-server inventory is the single source of truth for "what MCPs are mounted, and which is prod.")
 
 ### Dev Skills
 
@@ -585,8 +793,18 @@ Ticker   Rows     Earliest      Latest
 {sym}    {n:,}    {date}        {date}
 ...
 
-_context_derived: {n:,} rows through {date}
+enriched_context: {n:,} rows through {date}
 ```
+
+### SqueezeMetrics
+
+```
+latest: {date}  · {n:,} rows  · last refresh {iso timestamp}  [· {N} trading days behind]
+```
+
+(Section omitted entirely when `alex-data/.sync-meta.json` doesn't exist.)
+
+Refresh to {expected_latest}? → run `alex-squeezemetrics-update-data` (trigger: "update squeezemetrics data")
 
 ### Calculated Fields
 
@@ -603,6 +821,36 @@ Re-run enrichment to {latest raw date}? ({ticker list})
 
 - {what was done, or "none"}
 
+### Root Organization
+
+Terse memory-refresher for the TB data root, emitted on every run so the user re-anchors at session start. Pull dynamic values from config + a live directory scan — don't hardcode ticker lists or block folder names. Omit any line whose path doesn't exist (e.g. skip `alex-data/squeezemetrics/` if the folder is absent; skip the dev-skills line when `dev_skills_folder: none`).
+
+```
+database/
+  analytics.duckdb       trades.* (trade_data, reporting_data) + profiles.*   · DuckDB · actively written by MCP
+  market.duckdb          legacy/frozen in 3.0 Parquet mode · views point at /data/market/ · skill skips probing
+
+market/                  Parquet · canonical market data in 3.0
+  spot/ticker=X/date=Y/  raw OHLCV (intraday minute bars)
+  enriched/ticker=X/     per-ticker indicators (RSI_14, ATR_Pct, Return_*, Gap_Pct, …)
+  enriched/context/      cross-ticker regime (Vol_Regime, Term_Structure_State, VIX_*)
+  underlyings.json       registered option underlyings
+
+alex-data/               user-managed datasets · path-disjoint from MCP writes
+  squeezemetrics/        DIX/GEX Parquet (optional · refresh via "update squeezemetrics data")
+  .sync-meta.json        watermarks for alex-data pipelines
+
+{dev_skills_folder}/     {N} dev skills · full list in CLAUDE.md Dev Skills Registry      # omit if dev_skills_folder: none
+.mcp/                    docker-compose.yml · tradeblocks-mcp.version ({mcp_image_tag})
+.mcp.json                Claude Code MCP client config ({server_key} → :{port}{mcp_path})
+Scripts/                 standing utilities — see CLAUDE.md "Running the Standing Scripts"
+<YYYYMMDD - TICKER STRATEGY PARAMS>/   block folders · each has trade CSVs + trade_profile.json
+```
+
+Query paths:
+  analytics.duckdb  →  direct Python `duckdb.connect(..., read_only=True)` inside a context manager, OR MCP `run_sql`
+  market/*.parquet  →  MCP `run_sql` over registered views: spot, spot_daily, enriched, enriched_context, option_chain, option_quote_minutes
+
 Config: `alex_tradeblocks_startup_config.md`
 ````
 
@@ -611,13 +859,18 @@ Rules:
 - **Both tables are always present** (`Upstream vs Installed` and `Market Data Coverage`). Never compress either into a summary sentence, even when every row is OK. See the output-format blocks in Step 3A and Step 4B for exact column layouts and ordering.
 - **Omit the `### Dev Skills` section entirely** when `dev_skills_folder: none` in config. Also drop the `· dev: ...` suffix on the Status line.
 - **Omit the `### Calculated Fields` section** when every enriched field is current — no point padding the report with an "all green" line. Always emit when anything is STALE or EMPTY.
-- **`[✓|✗] DuckDB` row folds market + analytics**. Staleness shows inline (e.g. `market: 2026-04-14 (stale — update to 2026-04-15?)`); the `· enrichment STALE` tail appears only when Step 4C found stale fields.
+- **Omit the `### SqueezeMetrics` section** entirely when `alex-data/.sync-meta.json` doesn't exist. Also drop the `[✓|✗] SqueezeMetrics` row from the Status block in that case.
+- **Storage is split across two rows** so each backend's health is visible at a glance:
+  - `[✓|✗] Parquet` covers the Parquet-backed market data (Step 4A market views + Step 4B coverage). Staleness shows inline (e.g. `market: 2026-04-22 (stale — update to 2026-04-23?)`); the `· enrichment STALE` or `· enrichment EMPTY` tail appears only when Step 4C found stale or empty fields. Set `✗` when market data is stale OR enrichment is STALE/EMPTY.
+  - `[✓|✗] DuckDB` covers `database/analytics.duckdb` (Step 4A analytics inventory). Optional tail `· {N} active · {K} empty` gives a one-glance view of non-internal table status; drop it if everything is Active. Set `✗` only when the DB is MISSING or LOCKED/ERROR.
+- **`[✓|✗] SqueezeMetrics` row** uses the Step 4D staleness rule (more than 1 trading day behind). When stale, show the day-count suffix: `stale — 2 trading days behind`.
 - **No Tools & Skills table in the main summary.** It's redundant with Upstream vs Installed. Emit only on explicit request.
-- **No DuckDB inventory table in the main summary.** Detail-level; emit only when a table's status changes or the user asks.
+- **No Database inventory table in the main summary** (covers both `analytics.duckdb` tables and the Parquet market views from Step 4A). Detail-level; emit only when a view's status changes or the user asks.
+- **`### Root Organization` is always emitted** — it's the session-start memory refresher. Omit individual lines for paths that don't exist (`alex-data/squeezemetrics/`, the `{dev_skills_folder}/` line when `none`), but never compress the block into a summary sentence. The whole value is in seeing the layout.
 
 When there's drift, staleness, or a recovery-required state, emit the specific fix **inline beneath the relevant row**, not in a separate prompts section. E.g. under a `CACHE STALE` row in `Upstream vs Installed`, the next line reads `Fix: /plugin → {plugin_id} → Update now, then quit and relaunch Claude Code`.
 
-**Expanded detail sections** (DuckDB table inventory, full Calculated fields breakdown, Tools & Skills) are emitted **only when the user explicitly asks** ("show me the tables", "break down enrichment") or when a failure condition requires them (e.g. DuckDB liveness probe fails → full table inventory follows automatically). Do not emit them as default padding.
+**Expanded detail sections** (database/view inventory, full Calculated fields breakdown, Tools & Skills) are emitted **only when the user explicitly asks** ("show me the tables", "break down enrichment") or when a failure condition requires them (e.g. analytics DuckDB liveness probe fails → full inventory follows automatically). Do not emit them as default padding.
 
 ---
 
@@ -657,7 +910,7 @@ forbidden_env_vars:                          # vars that MUST NOT be set (e.g. a
 # MCP server
 mcp_source: npm                              # npm | ghcr | other
 mcp_package_name: tradeblocks-mcp
-mcp_image_tag: "2.3"                         # matches .mcp/tradeblocks-mcp.version
+mcp_image_tag: "3.0.0-beta.2"                # matches .mcp/tradeblocks-mcp.version
 mcp_container_name: tradeblocks-mcp
 mcp_compose_dir: .mcp
 
@@ -666,11 +919,11 @@ plugin_marketplaces:
   tradeblocks@tradeblocks-skills: davidromeo/tradeblocks-skills
   alex-tradeblocks@alex-tradeblocks-skills: <user>/<fork-or-personal-repo>
 
-# DuckDB
-analytics_db: analytics.duckdb
-market_db: market.duckdb
-legacy_tables_ignore:
-  - market.context   # example: migrated to market.daily + _context_derived on YYYY-MM-DD
+# Databases (3.0 canonical locations)
+analytics_db: database/analytics.duckdb      # trades + profiles (DuckDB, actively written)
+market_db: database/market.duckdb            # legacy/frozen in Parquet mode — skill does not probe
+legacy_tables_ignore:                        # safety net for analytics-side tables only
+  - market.context                           # example (3.0 drops market.context on open; kept for mixed-state reference)
 ---
 
 # TradeBlocks Startup — Local Config
@@ -683,7 +936,8 @@ Edit by hand if your environment changes (e.g. switching providers, moving the d
 
 (free-form — document one-off things the skill should know. Examples:)
 
-- **DB lock contention**: the persistent MCP container holds the DuckDB lock. Update scripts auto-stop/start it.
+- **DB lock contention**: the persistent MCP container holds the `analytics.duckdb` write lock. Ad-hoc `docker run` of the MCP image will collide — stop compose first or use the existing container. Market data moved to Parquet in 3.0 (no lock).
+- **Parquet mode** (YYYY-MM-DD): `TRADEBLOCKS_PARQUET=true` set. Market data writes go to Parquet under `market/`; legacy `market.daily` / `market.intraday` / `market.date_context` tables dropped by 3.0 on first open.
 - **Massive cutover** (YYYY-MM-DD): project is ThetaData-only. `MASSIVE_API_KEY` must not be set.
 ```
 
@@ -693,7 +947,7 @@ Edit by hand if your environment changes (e.g. switching providers, moving the d
 
 | Belongs in `SKILL.md` (published) | Belongs in `alex_tradeblocks_startup_config.md` (local) |
 |---|---|
-| The four-step process | TradeBlocks Data root path |
+| The step-by-step process (Steps 0–4) | TradeBlocks Data root path |
 | Probe logic (generic) | Dev skills folder (if any, and where) |
 | Config schema template | Market data provider choice |
 | Drift detection rules | Provider endpoint URL |
@@ -713,4 +967,4 @@ If a future skill version needs to change *how* a thing works (e.g. different pr
 - Do not overwrite `alex_tradeblocks_startup_config.md` on any run except the very first. Subsequent runs may only append notes under existing sections if explicitly asked.
 - Do not silently ignore config drift — if detected values don't match the config, surface it and ask.
 - Do not force-kill processes or containers without user confirmation.
-- Do not auto-run the market data update or enrichment re-run — only prompt and wait for user confirmation.
+- Do not auto-run market data update, enrichment re-run, or SqueezeMetrics refresh — only prompt and wait for user confirmation.

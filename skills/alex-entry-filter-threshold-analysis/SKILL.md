@@ -5,13 +5,13 @@ description: >
   across its unique values, computes retention references (99% through 50% of baseline
   Net ROR), and renders an interactive HTML chart with efficiency frontier, scatter,
   and OO filter translation. Reads only two block-local CSVs: entry_filter_data.csv
-  and entry_filter_groups.*.csv. Never builds data — defers to alex-entry-filter-build-data.
+  and entry_filter_groups.*.csv. Never builds data — defers to dev-entry-filter-build-data.
   Filter labeling, ordering, and filter list all come from the groups CSV so the user
   can customize per-block by editing their local copy.
 compatibility: Requires Python 3 with numpy. No MCP. No DuckDB. No network.
 metadata:
   author: alex-tradeblocks
-  version: "5.0.0"
+  version: "5.0.1"
 ---
 
 # Entry Filter Threshold Analysis

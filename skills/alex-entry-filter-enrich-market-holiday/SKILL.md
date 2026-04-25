@@ -8,7 +8,7 @@ description: >
 compatibility: Requires TradeBlocks MCP server with trade data loaded.
 metadata:
   author: alex-tradeblocks
-  version: "1.0.2"
+  version: "1.0.3"
 ---
 
 # Enrich Market Holiday Proximity

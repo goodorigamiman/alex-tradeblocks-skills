@@ -52,7 +52,7 @@ Each skill that generates a report has its own `.py` module **inside its skill f
 | Module | Skill Folder | Purpose |
 |--------|-------------|---------|
 | `build_pareto_report.py` | `dev-entry-filter-pareto/` | Pareto chart generator |
-| `gen_heatmap.py` | `alex-entry-filter-heatmap/` | Heatmap generator |
+| `gen_heatmap.py` | `dev-entry-filter-heatmap/` | Heatmap generator |
 | `build_parallel_coords.py` | `dev-entry-filter-parallel-coords/` | Parallel coords chart |
 | `gen_threshold_analysis.py` | `dev-threshold-analysis/` | Threshold sweep chart |
 
@@ -164,7 +164,7 @@ These modules use `sys.path.insert` to reference `_shared/` for CSV/SQL imports.
 
 ### `entry_filter_holidays.default.csv`
 
-**Purpose:** Reference table of US options market holidays for computing trade proximity to holidays. Used by the `alex-entry-filter-enrich-market-holiday` skill to add Days_to_Holiday, Weeks_to_Holiday, Days_from_Holiday, and Weeks_from_Holiday columns to `entry_filter_data.csv`.
+**Purpose:** Reference table of US options market holidays for computing trade proximity to holidays. Used by the `dev-entry-filter-enrich-market-holiday` skill to add Days_to_Holiday, Weeks_to_Holiday, Days_from_Holiday, and Weeks_from_Holiday columns to `entry_filter_data.csv`.
 
 **Columns:**
 

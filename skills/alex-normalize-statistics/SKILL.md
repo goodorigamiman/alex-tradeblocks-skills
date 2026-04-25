@@ -8,7 +8,7 @@ description: >
 compatibility: Requires TradeBlocks MCP server with trade data loaded. Block must have margin_req and num_contracts populated on trades.
 metadata:
   author: alex-tradeblocks
-  version: "1.0.2"
+  version: "1.0.3"
 ---
 
 # alex-normalize-statistics

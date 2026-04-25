@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-alex-entry-filter-threshold-analysis — CLI driver.
+dev-entry-filter-threshold-analysis — CLI driver.
 
 Generates an interactive threshold-analysis HTML report for a single entry filter
 on a block. Reads only two block-local CSVs; never builds data itself.

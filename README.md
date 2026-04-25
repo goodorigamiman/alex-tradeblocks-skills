@@ -30,14 +30,16 @@ No cross-plugin dependencies — every skill is self-contained.
 
 <!-- SKILLS-TABLE:BEGIN (auto-managed by the github publish workflow — do not edit between markers; edit dev SKILL.md descriptions instead) -->
 
-9 skills organized into three groups.
+11 skills organized into three groups.
 
 ### Startup & tooling
 
 | Skill | Purpose |
 |---|---|
-| `alex-tradeblocks-startup` | Health check at session start: MCP server, market provider, plugin drift (upstream vs cache), DuckDB liveness, market-data freshness, enrichment coverage. Auto-recovers MCP server / market provider when possible. **Run this first in every session.** |
+| `alex-tradeblocks-startup` | Health check at session start (TradeBlocks 3.0 / Parquet-mode aware): MCP server inventory (baseline + dev variants), market provider, plugin drift, DuckDB liveness, Parquet market data freshness, enrichment coverage, optional SqueezeMetrics freshness. Auto-recovers when possible. **Run this first in every session.** |
+| `alex-dev-router` | Slash-invoked router (`/dev <thing>`) for dev resources. Auto-discovers from the configured dev folder and `mcp__tradeblocks-dev__*` tools, fuzzy-matches user requests, asks for confirmation when ambiguous, and executes the dev variant deterministically. Maintainer-side; on a pulled-only install reports "no dev environment detected" rather than silently falling through to prod. |
 | `alex-normalize-statistics` | Wraps `get_statistics` and renormalizes P&L + margin to per-contract terms; flags wide margin ranges that distort return-on-margin reporting. |
+| `alex-squeezemetrics-update-data` | Refreshes SqueezeMetrics DIX/GEX daily data from upstream. Maintains canonical CSV under `_shared/`, mirrors to Parquet under `alex-data/squeezemetrics/`, updates `.sync-meta.json` watermark. Idempotent + atomic. Trigger: *"update squeezemetrics data"*. |
 
 ### Entry filter analysis
 

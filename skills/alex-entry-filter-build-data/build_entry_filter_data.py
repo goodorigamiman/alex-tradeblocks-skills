@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-alex-entry-filter-build-data — build entry_filter_data.csv for a block.
+dev-entry-filter-build-data — build entry_filter_data.csv for a block.
 
 Reads the filter groups CSV to decide which columns to build, pulls trade +
 market data via read-only DuckDB, computes per-trade 1-lot economics, populates

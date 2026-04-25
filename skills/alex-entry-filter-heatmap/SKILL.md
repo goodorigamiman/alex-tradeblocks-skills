@@ -8,18 +8,18 @@ description: >
   click-to-capture — continuous threshold/combo expressions and
   binary/categorical In (==) / Out (!=) expressions all feed one selections
   panel, persisted in localStorage, copy-to-clipboard feeds
-  alex-create-datelist. Reads THREE block-local CSVs and only these three:
+  dev-create-datelist. Reads THREE block-local CSVs and only these three:
   entry_filter_groups.*.csv (labels & organization),
   entry_filter_threshold_results.csv (continuous sweep data + block baselines),
   entry_filter_categorical_results.csv (binary + categorical In/Out stats).
   Does NOT read entry_filter_data.csv — every number it shows is pre-computed
-  by alex-entry-filter-threshold-sweep. Defaults: AvgROR metric, max_avg
+  by dev-entry-filter-threshold-sweep. Defaults: AvgROR metric, max_avg
   variant, Report Heatmap column for filter inclusion. All three overridable
   via --sweep-metric, --sweep-variant, --heatmap-col.
 compatibility: Requires Python 3 standard library only. No MCP, no DuckDB, no network, no numpy.
 metadata:
   author: alex-tradeblocks
-  version: "5.1.0"
+  version: "5.1.1"
 ---
 
 # Entry Filter Heatmap

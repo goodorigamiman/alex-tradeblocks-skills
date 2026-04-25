@@ -6,7 +6,7 @@ description: >
   flagged in the groups CSV's "Threshold Analysis Default Report" column),
   then reads the result CSVs + correlations + groups metadata + a local
   preferences file to produce a baseline-anchored summary and a filter
-  shortlist (≤2 per Entry Group) ready to feed to alex-create-datelist.
+  shortlist (≤2 per Entry Group) ready to feed to dev-create-datelist.
   Analysis is grounded in the generated reports; out-of-context insights
   surface as explicit gap warnings. Default metric AvgROR; AvgPCR only on
   explicit user request (and PCR output is exploratory — see README
@@ -16,7 +16,7 @@ compatibility: Orchestrator only. No Python. Depends on four upstream
   entry-filter dev skills.
 metadata:
   author: alex-tradeblocks
-  version: "1.2.1"
+  version: "1.2.2"
 ---
 
 # Entry Filter Analysis

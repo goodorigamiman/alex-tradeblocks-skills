@@ -12,7 +12,7 @@ description: >
 compatibility: Requires TradeBlocks MCP server with trade data and market data loaded. Python 3 with pandas and duckdb.
 metadata:
   author: alex-tradeblocks
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # Build Entry Filter Data CSV
