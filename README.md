@@ -4,6 +4,16 @@ Personal skill pack extending the [TradeBlocks MCP server](https://github.com/da
 
 ---
 
+> **Prerequisite — TradeBlocks 3.x.x with Parquet mode**
+>
+> These skills require the TradeBlocks MCP server running version **3.x.x** with `TRADEBLOCKS_PARQUET=true`. Skills on `main` read Parquet-backed market views (`market.spot`, `market.option_quote_minutes`, `market.enriched_context`, etc.) directly and will fail or return empty results against the legacy DuckDB-only market store.
+>
+> **If you're on TradeBlocks 2.x or still running DuckDB-mode market data**, install the last 2.x-compatible release instead:
+> - Branch: [`legacy/tb-2x`](https://github.com/goodorigamiman/alex-tradeblocks-skills/tree/legacy/tb-2x)
+> - Tag / release: [`v2.6.2`](https://github.com/goodorigamiman/alex-tradeblocks-skills/releases/tag/v2.6.2)
+
+---
+
 ## Installation
 
 ```
@@ -17,7 +27,7 @@ Then quit and relaunch Claude Code to activate.
 
 ## Requirements
 
-- **[TradeBlocks MCP server](https://github.com/davidromeo/tradeblocks)** running (Docker, Node, or any supported run method — see TB docs)
+- **[TradeBlocks MCP server](https://github.com/davidromeo/tradeblocks) 3.x.x** running with `TRADEBLOCKS_PARQUET=true` (Docker, Node, or any supported run method — see TB docs). For 2.x / DuckDB-only setups, see the prerequisite callout above and install [`v2.6.2`](https://github.com/goodorigamiman/alex-tradeblocks-skills/releases/tag/v2.6.2) instead.
 - **Market data provider** — ThetaData (local daemon), Massive.com, TradingView (CSV import), or equivalent
 - **Python 3** with `duckdb`, `pandas`, `numpy`, `pyyaml`
 - **Option Omega CSV exports** imported into block folders

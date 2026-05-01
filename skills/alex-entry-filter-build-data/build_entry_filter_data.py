@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dev-entry-filter-build-data — build entry_filter_data.csv for a block.
+alex-entry-filter-build-data — build entry_filter_data.csv for a block.
 
 Reads the filter groups CSV to decide which columns to build, pulls trade +
 market data via read-only DuckDB, computes per-trade 1-lot economics, populates
@@ -33,23 +33,28 @@ import pandas as pd
 
 MIN_TRADES = 50
 MIN_COVERAGE_FRAC = 0.90
-MAX_NULL_FRAC = 0.10
+MAX_NULL_FRAC = 0.20
+MIN_COVERAGE_YEARS = 2.0
 
 
 def default_tb_root() -> pathlib.Path:
     """
     Resolve TB root by walking up from the current working directory, looking
-    for a folder that contains `analytics.duckdb` and `market.duckdb`. Falls
-    back to the cwd itself if neither ancestor nor cwd match — the downstream
-    sufficiency check will then surface the mismatch clearly.
+    for a folder that contains a TradeBlocks 3.0 layout: a `market/` directory
+    (Parquet datasets) plus `analytics.duckdb` either at the root or under
+    `database/`. Falls back to the cwd itself if neither ancestor nor cwd
+    match — the downstream sufficiency check will then surface the mismatch
+    clearly.
 
     This lets the skill be invoked from anywhere inside the TB project without
-    a hardcoded absolute path (which was brittle and broke on fresh-pull users'
-    machines). Users can still override with --tb-root.
+    a hardcoded absolute path. Users can still override with --tb-root.
     """
     cwd = pathlib.Path.cwd().resolve()
     for candidate in (cwd, *cwd.parents):
-        if (candidate / "analytics.duckdb").exists() and (candidate / "market.duckdb").exists():
+        has_analytics = ((candidate / "database" / "analytics.duckdb").exists()
+                         or (candidate / "analytics.duckdb").exists())
+        has_market = (candidate / "market").is_dir()
+        if has_analytics and has_market:
             return candidate
     return cwd
 
@@ -143,7 +148,12 @@ TB_TABLE_RE = re.compile(r"^\s*([^\s(]+)(?:\s*\(\s*([^)]+)\s*\))?\s*$")
 
 
 def parse_tb_table(tb_table: str) -> tuple[str, str | None]:
-    """Return (schema.table, ticker_or_None). e.g. 'market.daily (VIX)' → ('market.daily', 'VIX')."""
+    """Return (schema.table, ticker_or_None). e.g. 'market.daily (VIX)' → ('market.daily', 'VIX').
+
+    Operates on the user-facing TB Table value from the groups CSV (legacy
+    schema strings: market.daily, market._context_derived, market.intraday).
+    The build pipeline maps these to the 3.0 Parquet views internally.
+    """
     if not tb_table or pd.isna(tb_table):
         return ("", None)
     m = TB_TABLE_RE.match(str(tb_table))
@@ -164,9 +174,159 @@ def load_groups(path: pathlib.Path) -> pd.DataFrame:
 
 # ── DB access ────────────────────────────────────────────────────────────────
 
+def _resolve_analytics_path(tb_root: pathlib.Path) -> pathlib.Path:
+    """
+    Return the analytics.duckdb path. Looks in two locations:
+      - `database/analytics.duckdb` (canonical 3.0 prod-Docker layout, per CLAUDE.md)
+      - `analytics.duckdb` at the root (dev-host MCP layout)
+
+    When both exist (a common state on machines that run both the prod
+    container and a dev host process), pick the one with the more recent
+    mtime. This guarantees the script reads whichever DB the active MCP is
+    writing to without requiring the user to know which is which. If only
+    one exists, return it. If neither exists, raise.
+    """
+    candidates = [tb_root / "database" / "analytics.duckdb",
+                  tb_root / "analytics.duckdb"]
+    existing = [p for p in candidates if p.exists()]
+    if not existing:
+        raise RuntimeError(
+            f"analytics.duckdb not found under {tb_root}. "
+            f"Tried database/analytics.duckdb and analytics.duckdb."
+        )
+    if len(existing) == 1:
+        return existing[0]
+    # Both exist — choose the most recently modified.
+    return max(existing, key=lambda p: p.stat().st_mtime)
+
+
 def connect_readonly(tb_root: pathlib.Path):
-    con = duckdb.connect(str(tb_root / "analytics.duckdb"), read_only=True)
-    con.execute(f"ATTACH '{tb_root / 'market.duckdb'}' AS market (READ_ONLY)")
+    """
+    Open analytics.duckdb read-only and register Parquet-backed views for
+    market data. In TradeBlocks 3.0, the legacy market.duckdb is frozen and
+    the canonical sources are Parquet files under market/. These view names
+    mirror the MCP server's registrations so the script reads the same data
+    shape as `mcp__tradeblocks__run_sql`.
+
+    The Parquet datasets are lock-free, so multiple concurrent readers (this
+    script alongside the MCP container) are safe.
+
+    Views created:
+      market_spot               1-min OHLCV bars (replaces legacy market.intraday)
+      market_spot_daily         RTH daily aggregate of spot, computed on demand
+      market_enriched           per-ticker indicators (RSI_14, ATR_Pct, etc.)
+      market_enriched_context   cross-ticker regime data (Vol_Regime, etc.)
+      market_daily              compatibility view: spot_daily LEFT JOIN enriched
+                                — exposes the legacy fat-table column set
+                                so existing query templates work unchanged.
+    """
+    analytics = _resolve_analytics_path(tb_root)
+    con = duckdb.connect(str(analytics), read_only=True)
+
+    market_root = (tb_root / "market").resolve()
+    spot_glob = str(market_root / "spot" / "**" / "*.parquet").replace("'", "''")
+    enr_glob = str(market_root / "enriched" / "ticker=*" / "data.parquet").replace("'", "''")
+    ctx_glob = str(market_root / "enriched" / "context" / "data.parquet").replace("'", "''")
+
+    con.execute(f"""
+        CREATE OR REPLACE TEMP VIEW market_spot AS
+        SELECT * FROM read_parquet('{spot_glob}', hive_partitioning=true)
+    """)
+
+    # RTH-only daily aggregate. Mirrors the MCP server's market.spot_daily
+    # definition: first(open), max(high), min(low), last(close) within RTH
+    # bars, grouped by (ticker, date).
+    #
+    # NULLIF(price, 0) is critical: the spot Parquet is zero-filled at the
+    # open bar for several index tickers (VIX, VIX9D, VIX3M) — bars at 09:30
+    # land with open=0/low=0 but a real high/close. Without NULLIF, arg_min
+    # picks up the zero and corrupts the daily open; min(low) returns 0 for
+    # every day. With NULLIF, the aggregation skips zero values (DuckDB
+    # aggregates ignore NULLs by default), and the result reflects the first
+    # real bar of the session.
+    #
+    # Casts date to DATE because hive_partitioning emits the partition
+    # column as VARCHAR when reading from a glob — DATE is required for
+    # downstream joins to trades.trade_data.
+    con.execute("""
+        CREATE OR REPLACE TEMP VIEW market_spot_daily AS
+        SELECT
+            ticker,
+            CAST(date AS DATE)              AS date,
+            arg_min(NULLIF(open, 0), time)  AS open,
+            max(NULLIF(high, 0))            AS high,
+            min(NULLIF(low, 0))             AS low,
+            arg_max(NULLIF(close, 0), time) AS close
+        FROM market_spot
+        WHERE time >= '09:30' AND time <= '15:59'
+        GROUP BY ticker, CAST(date AS DATE)
+        -- Exclude non-trading days (weekends, holidays) where the partition
+        -- file exists but every bar is zero-filled. Without this, prior-day
+        -- lag lookups (MAX(date) < trade_date) can land on a Sunday and
+        -- pull a row whose OHLC are all NULL.
+        HAVING count(*) FILTER (WHERE close > 0) > 0
+    """)
+
+    # The Parquet `date` column is stored as VARCHAR in the enriched datasets,
+    # so we cast it to DATE on the way in for downstream join compatibility.
+    #
+    # Filter out weekends: the enriched dataset can contain Saturday/Sunday
+    # rows (zero-filled or carried-forward indicators) that the legacy
+    # market.daily table didn't surface. Without this filter, a prior-day
+    # MAX(date) lookup on a Monday picks Saturday and pulls a row with NULL
+    # OHLC — silently corrupting prior-day VIX/SPX/etc. lag fields.
+    # DuckDB dayofweek: Sunday=0, Monday=1, …, Saturday=6.
+    con.execute(f"""
+        CREATE OR REPLACE TEMP VIEW market_enriched AS
+        SELECT
+            * EXCLUDE (date),
+            CAST(date AS DATE) AS date
+        FROM read_parquet('{enr_glob}', hive_partitioning=true)
+        WHERE dayofweek(CAST(date AS DATE)) BETWEEN 1 AND 5
+    """)
+
+    # Same VARCHAR-date issue and weekend filter as market_enriched.
+    con.execute(f"""
+        CREATE OR REPLACE TEMP VIEW market_enriched_context AS
+        SELECT
+            * EXCLUDE (date),
+            CAST(date AS DATE) AS date
+        FROM read_parquet('{ctx_glob}')
+        WHERE dayofweek(CAST(date AS DATE)) BETWEEN 1 AND 5
+    """)
+
+    # Legacy-compat view: legacy market.daily was a fat denormalized table
+    # carrying both OHLCV and per-ticker indicators. 3.0 splits these across
+    # spot_daily + enriched, and the two sources can have different date
+    # coverage windows (e.g., spot_daily starts in 2024-09 from ThetaData
+    # while enriched was backfilled from older sources to 2022). A FULL
+    # OUTER JOIN preserves every (ticker, date) row from either side so the
+    # legacy query templates see the union of available data — exactly what
+    # they would have seen against the legacy fat table.
+    #
+    # COALESCE on (ticker, date) so every row has populated key columns
+    # regardless of which side the row came from.
+    con.execute("""
+        CREATE OR REPLACE TEMP VIEW market_daily AS
+        SELECT
+            COALESCE(s.ticker, e.ticker)                  AS ticker,
+            CAST(COALESCE(s.date, e.date) AS DATE)        AS date,
+            s.open, s.high, s.low, s.close,
+            e.Prior_Close, e.Gap_Pct, e.ATR_Pct, e.RSI_14,
+            e.Price_vs_EMA21_Pct, e.Price_vs_SMA50_Pct,
+            e.Realized_Vol_5D, e.Realized_Vol_20D,
+            e.Return_5D, e.Return_20D,
+            e.Intraday_Range_Pct, e.Intraday_Return_Pct,
+            e.Close_Position_In_Range, e.Gap_Filled,
+            e.Consecutive_Days, e.Prev_Return_Pct, e.Prior_Range_vs_ATR,
+            e.High_Time, e.Low_Time, e.High_Before_Low, e.Reversal_Type,
+            e.Opening_Drive_Strength, e.Intraday_Realized_Vol,
+            e.Day_of_Week, e.Month, e.Is_Opex, e.ivr, e.ivp
+        FROM market_spot_daily s
+        FULL OUTER JOIN market_enriched e
+          ON e.ticker = s.ticker AND e.date = s.date
+    """)
+
     return con
 
 
@@ -201,13 +361,13 @@ def run_sufficiency_checks(con, block_id: str, underlying: str) -> dict:
             SUM(CASE WHEN cd.Vol_Regime IS NOT NULL THEN 1 ELSE 0 END)::INT,
             COUNT(*)::INT
         FROM trades.trade_data t
-        LEFT JOIN market.daily vix ON vix.ticker='VIX' AND CAST(vix.date AS DATE)=CAST(t.date_opened AS DATE)
-        LEFT JOIN market.daily spx ON spx.ticker='SPX' AND CAST(spx.date AS DATE)=CAST(t.date_opened AS DATE)
-        LEFT JOIN market.daily u ON u.ticker='{underlying}' AND CAST(u.date AS DATE)=CAST(t.date_opened AS DATE)
-        LEFT JOIN market.daily v9 ON v9.ticker='VIX9D' AND CAST(v9.date AS DATE)=CAST(t.date_opened AS DATE)
-        LEFT JOIN market.daily v3 ON v3.ticker='VIX3M' AND CAST(v3.date AS DATE)=CAST(t.date_opened AS DATE)
-        LEFT JOIN market._context_derived cd ON CAST(cd.date AS DATE) = (
-            SELECT MAX(CAST(c2.date AS DATE)) FROM market._context_derived c2
+        LEFT JOIN market_daily vix ON vix.ticker='VIX' AND CAST(vix.date AS DATE)=CAST(t.date_opened AS DATE)
+        LEFT JOIN market_daily spx ON spx.ticker='SPX' AND CAST(spx.date AS DATE)=CAST(t.date_opened AS DATE)
+        LEFT JOIN market_daily u ON u.ticker='{underlying}' AND CAST(u.date AS DATE)=CAST(t.date_opened AS DATE)
+        LEFT JOIN market_daily v9 ON v9.ticker='VIX9D' AND CAST(v9.date AS DATE)=CAST(t.date_opened AS DATE)
+        LEFT JOIN market_daily v3 ON v3.ticker='VIX3M' AND CAST(v3.date AS DATE)=CAST(t.date_opened AS DATE)
+        LEFT JOIN market_enriched_context cd ON CAST(cd.date AS DATE) = (
+            SELECT MAX(CAST(c2.date AS DATE)) FROM market_enriched_context c2
             WHERE CAST(c2.date AS DATE) < CAST(t.date_opened AS DATE))
         WHERE t.block_id = ?
     """, [block_id]).fetchone()
@@ -331,7 +491,7 @@ def build_base_frame(con, block_id: str) -> pd.DataFrame:
 
 def build_intraday_columns(con, block_id: str, underlying: str) -> pd.DataFrame:
     """
-    Pull VIX_at_Entry, VIX_at_Close, and Intra_Move_Pct from market.intraday
+    Pull VIX_at_Entry, VIX_at_Close, and Intra_Move_Pct from market_spot
     where coverage exists. VIX-at-entry/close uses the VIX 15-min bar's `open`
     (= price at bar start, cleanest "at this timestamp" reading, no lookahead).
     Intra_Move_Pct = (underlying bar open at entry − underlying daily open) /
@@ -341,7 +501,7 @@ def build_intraday_columns(con, block_id: str, underlying: str) -> pd.DataFrame:
     convert OO's `Movement` (in points) to percentage using the same denominator.
 
     time_opened / time_closed in trades.trade_data are 'HH:MM:SS';
-    market.intraday.time is 'HH:MM' — substring(1,5) strips seconds.
+    market_spot.time is 'HH:MM' — substring(1,5) strips seconds.
 
     Returns DataFrame with columns:
         trade_index, VIX_at_Entry_tb, VIX_at_Close_tb, Intra_Move_Pct_tb,
@@ -375,19 +535,19 @@ def build_intraday_columns(con, block_id: str, underlying: str) -> pd.DataFrame:
             u_day.open AS underlying_daily_open_tb,
             u_day.Prior_Close AS underlying_prior_close_tb
         FROM t
-        LEFT JOIN market.intraday vix_entry
+        LEFT JOIN market_spot vix_entry
           ON vix_entry.ticker = 'VIX'
          AND vix_entry.date = t.date_opened
          AND vix_entry.time = t.time_opened_bar
-        LEFT JOIN market.intraday vix_close
+        LEFT JOIN market_spot vix_close
           ON vix_close.ticker = 'VIX'
          AND vix_close.date = t.date_closed
          AND vix_close.time = t.time_closed_bar
-        LEFT JOIN market.intraday u_entry
+        LEFT JOIN market_spot u_entry
           ON u_entry.ticker = '{underlying}'
          AND u_entry.date = t.date_opened
          AND u_entry.time = t.time_opened_bar
-        LEFT JOIN market.daily u_day
+        LEFT JOIN market_daily u_day
           ON u_day.ticker = '{underlying}'
          AND u_day.date = t.date_opened
         ORDER BY t.trade_index
@@ -416,7 +576,7 @@ def find_oo_trade_log(block_folder: pathlib.Path) -> Optional[pathlib.Path]:
 def build_oo_fallback(block_folder: pathlib.Path) -> Tuple[pd.DataFrame, Dict[str, object]]:
     """
     Read the OO trade-log CSV to provide fallback values for trades where
-    market.intraday had no bar. Returns (df, meta).
+    market_spot had no bar. Returns (df, meta).
 
     The returned df is keyed on normalized (date_opened, time_opened) strings
     ('YYYY-MM-DD' and 'HH:MM:SS') and carries:
@@ -476,7 +636,7 @@ def build_oo_fallback(block_folder: pathlib.Path) -> Tuple[pd.DataFrame, Dict[st
 
     # OO Gap is in POINTS (today's open − prior close). Coalesce layer converts
     # to percentage using underlying PRIOR CLOSE (standard Gap% convention).
-    # Fallback path for the groups-CSV-resolved Gap_Pct when market.daily
+    # Fallback path for the groups-CSV-resolved Gap_Pct when market_daily
     # coverage for the block's underlying is absent pre-some-date.
     if "Gap" in raw.columns:
         out["Gap_Points_oo"] = pd.to_numeric(raw["Gap"], errors="coerce")
@@ -552,7 +712,7 @@ def coalesce_trade_context(
         coverage[out_col] = {"tb_intraday": n_tb, "oo_csv": n_oo, "missing": n_missing}
 
     # Gap_Pct gets a different treatment: the groups-CSV filter resolver is the
-    # PRIMARY path (pulls market.daily enrichment's Gap_Pct). This fallback only
+    # PRIMARY path (pulls market_daily enrichment's Gap_Pct). This fallback only
     # fires if that path failed. Keep Gap_Pct_oo in the dataframe for main() to
     # apply as a post-merge fill after filter_frame is merged in.
 
@@ -578,7 +738,7 @@ def summarize_pcr(df: pd.DataFrame) -> str:
     )
 
 
-# Map CSV Column → actual market.daily DB column for ticker-prefixed cases
+# Map CSV Column → actual market_daily DB column for ticker-prefixed cases
 TICKER_PREFIX_MAP = {
     "Open": "open",
     "Close": "close",
@@ -599,16 +759,16 @@ _MARKET_DAILY_COLS_CACHE: Optional[set] = None
 
 
 def market_daily_columns(con) -> set:
-    """Cached set of actual column names in market.daily."""
+    """Cached set of actual column names in market_daily."""
     global _MARKET_DAILY_COLS_CACHE
     if _MARKET_DAILY_COLS_CACHE is None:
-        r = con.execute("SELECT * FROM market.daily LIMIT 1").df()
+        r = con.execute("SELECT * FROM market_daily LIMIT 1").df()
         _MARKET_DAILY_COLS_CACHE = set(r.columns)
     return _MARKET_DAILY_COLS_CACHE
 
 
 def resolve_db_field(con, csv_col: str, tb_field: str, ticker: Optional[str]) -> Optional[str]:
-    """Return the actual market.daily column to query for csv_col, or None if unresolvable."""
+    """Return the actual market_daily column to query for csv_col, or None if unresolvable."""
     cols = market_daily_columns(con)
     # If CSV Column directly matches a DB column, use it (handles SPX/QQQ direct fields)
     if csv_col in cols:
@@ -631,7 +791,7 @@ def resolve_db_field(con, csv_col: str, tb_field: str, ticker: Optional[str]) ->
     return None
 
 
-# Fetch fields from market.daily for a given ticker and lag type
+# Fetch fields from market_daily for a given ticker and lag type
 def fetch_ticker_fields(con, block_id: str, ticker: str,
                         entries: List[Tuple[str, str]],
                         lag: str) -> Tuple[pd.DataFrame, Dict[str, str]]:
@@ -648,7 +808,7 @@ def fetch_ticker_fields(con, block_id: str, ticker: str,
         sql = f"""
             SELECT CAST(t.date_opened AS DATE) AS date_opened, {select_sql}
             FROM trades.trade_data t
-            LEFT JOIN market.daily m ON m.ticker = ?
+            LEFT JOIN market_daily m ON m.ticker = ?
               AND CAST(m.date AS DATE) = CAST(t.date_opened AS DATE)
             WHERE t.block_id = ?
         """
@@ -657,9 +817,9 @@ def fetch_ticker_fields(con, block_id: str, ticker: str,
         sql = f"""
             SELECT CAST(t.date_opened AS DATE) AS date_opened, {select_sql}
             FROM trades.trade_data t
-            LEFT JOIN market.daily m ON m.ticker = ?
+            LEFT JOIN market_daily m ON m.ticker = ?
               AND CAST(m.date AS DATE) = (
-                SELECT MAX(CAST(m2.date AS DATE)) FROM market.daily m2
+                SELECT MAX(CAST(m2.date AS DATE)) FROM market_daily m2
                 WHERE m2.ticker = ? AND CAST(m2.date AS DATE) < CAST(t.date_opened AS DATE))
             WHERE t.block_id = ?
         """
@@ -674,8 +834,8 @@ def fetch_context_fields(con, block_id: str, fields: list[str]) -> pd.DataFrame:
     sql = f"""
         SELECT CAST(t.date_opened AS DATE) AS date_opened, {field_sql}
         FROM trades.trade_data t
-        LEFT JOIN market._context_derived c ON CAST(c.date AS DATE) = (
-            SELECT MAX(CAST(c2.date AS DATE)) FROM market._context_derived c2
+        LEFT JOIN market_enriched_context c ON CAST(c.date AS DATE) = (
+            SELECT MAX(CAST(c2.date AS DATE)) FROM market_enriched_context c2
             WHERE CAST(c2.date AS DATE) < CAST(t.date_opened AS DATE))
         WHERE t.block_id = ?
     """
@@ -711,6 +871,10 @@ def build_filter_columns(con, block_id: str, underlying: str, groups: pd.DataFra
         lag = r["_lag"]
         tb_field = str(r["TB Field"]).strip() if not pd.isna(r["TB Field"]) else ""
 
+        # Schema comparisons match the user-facing TB Table values in the
+        # groups CSV (legacy names: market.daily / market._context_derived /
+        # market.intraday). These are translated to 3.0 view names when SQL
+        # is built — see connect_readonly() for the view registrations.
         if schema.startswith("market.intraday"):
             skipped[csv_col] = "intraday source not supported by this skill"
             continue
@@ -736,7 +900,7 @@ def build_filter_columns(con, block_id: str, underlying: str, groups: pd.DataFra
             if not db_col:
                 skipped[csv_col] = f"no DB column resolvable for ticker={ticker} (tried csv_col, TB Field='{tb_field}', ticker-strip)"
                 continue
-            buckets[("market.daily", ticker, lag)].append((csv_col, db_col))
+            buckets[("market_daily", ticker, lag)].append((csv_col, db_col))
             continue
 
         skipped[csv_col] = f"unknown TB Table '{r['TB Table']}'"
@@ -775,17 +939,41 @@ def build_filter_columns(con, block_id: str, underlying: str, groups: pd.DataFra
 
 
 def apply_null_threshold(df: pd.DataFrame, cols: list[str], skipped: dict, exempt: set[str]) -> pd.DataFrame:
-    """Drop columns exceeding MAX_NULL_FRAC nulls (unless exempt)."""
+    """Drop columns exceeding MAX_NULL_FRAC nulls UNLESS the populated rows
+    span at least MIN_COVERAGE_YEARS of date_opened — that fallback keeps
+    indicator filters whose lookback warmup eats the early years but whose
+    populated history still spans enough trading time to be analyzable.
+    Locked base cols listed in `exempt` always pass."""
     drop_cols = []
+    has_dates = "date_opened" in df.columns
     for c in cols:
         if c not in df.columns or c in exempt:
             continue
         if len(df) == 0:
             continue
         null_frac = df[c].isna().mean()
-        if null_frac > MAX_NULL_FRAC:
-            skipped[c] = f"{null_frac*100:.1f}% nulls in join (> {MAX_NULL_FRAC*100:.0f}% threshold)"
-            drop_cols.append(c)
+        if null_frac <= MAX_NULL_FRAC:
+            continue
+        # Over the null threshold — check the date-span fallback.
+        span_years = None
+        if has_dates:
+            non_null_dates = pd.to_datetime(
+                df.loc[df[c].notna(), "date_opened"], errors="coerce"
+            ).dropna()
+            if not non_null_dates.empty:
+                span_years = (non_null_dates.max() - non_null_dates.min()).days / 365.25
+                if span_years >= MIN_COVERAGE_YEARS:
+                    continue  # passes coverage fallback
+        if span_years is not None:
+            skipped[c] = (
+                f"{null_frac*100:.1f}% nulls, only {span_years:.1f}y span "
+                f"(needs ≤{MAX_NULL_FRAC*100:.0f}% nulls OR ≥{MIN_COVERAGE_YEARS:.0f}y coverage)"
+            )
+        else:
+            skipped[c] = (
+                f"{null_frac*100:.1f}% nulls in join (> {MAX_NULL_FRAC*100:.0f}% threshold; no date span available)"
+            )
+        drop_cols.append(c)
     return df.drop(columns=drop_cols, errors="ignore")
 
 
@@ -803,7 +991,10 @@ def apply_computed_ratios(df: pd.DataFrame, deferred: list, skipped: dict) -> pd
         if num not in df.columns or den not in df.columns:
             skipped[csv_col] = f"ratio requires missing columns: {num}, {den}"
             continue
-        df[csv_col] = df[num].astype(float) / df[den].replace(0, pd.NA).astype(float)
+        import numpy as np
+        num_vals = pd.to_numeric(df[num], errors="coerce")
+        den_vals = pd.to_numeric(df[den], errors="coerce").replace(0, np.nan)
+        df[csv_col] = num_vals / den_vals
     return df
 
 
@@ -830,23 +1021,29 @@ def enrich_holidays(df: pd.DataFrame, holidays_csv: pathlib.Path) -> pd.DataFram
         # DAYS — calendar distance to nearest holiday date (directional).
         # next_h: strictly after d → days_to >= 1 always.
         # prev_h: at-or-before d → days_from = 0 when trade is on an early close day.
-        next_h = next((h for h in holidays if h > d), holidays[-1])
-        prev_h = next((h for h in reversed(holidays) if h <= d), holidays[0])
-        days_to = (next_h - d).days
-        days_from = (d - prev_h).days
+        # If the holiday registry doesn't cover the trade's range (no past or no
+        # future holiday available), return None instead of clamping. Silently
+        # clamping mislabels every out-of-range trade as "in a holiday week",
+        # which inflates the Weeks_to/from = 0 buckets.
+        next_h = next((h for h in holidays if h > d), None)
+        prev_h = next((h for h in reversed(holidays) if h <= d), None)
+        days_to = (next_h - d).days if next_h is not None else None
+        days_from = (d - prev_h).days if prev_h is not None else None
 
         # WEEKS — ISO-week distance to nearest holiday week (directional).
-        # If ANY holiday falls in the trade's ISO week, both weeks_to = weeks_from = 0.
+        # If ANY holiday falls in the trade's ISO week, both weeks_to = weeks_from = 0
+        # (this is the same-week case: trade_mon coincides with a holiday-week mon
+        # so it appears in BOTH future_mons and past_mons).
         # Otherwise: weeks_to = weeks to the nearest future holiday week,
         #            weeks_from = weeks since the nearest past holiday week.
+        # Out-of-range trades get None on the relevant side.
         trade_mon = iso_week_monday(d)
-        # nearest holiday-week-monday at-or-after trade_mon
         future_mons = [hm for hm in holiday_weeks if hm >= trade_mon]
         past_mons = [hm for hm in holiday_weeks if hm <= trade_mon]
-        next_mon = future_mons[0] if future_mons else holiday_weeks[-1]
-        prev_mon = past_mons[-1] if past_mons else holiday_weeks[0]
-        weeks_to = max(0, (next_mon - trade_mon).days // 7)
-        weeks_from = max(0, (trade_mon - prev_mon).days // 7)
+        next_mon = future_mons[0] if future_mons else None
+        prev_mon = past_mons[-1] if past_mons else None
+        weeks_to = (next_mon - trade_mon).days // 7 if next_mon is not None else None
+        weeks_from = (trade_mon - prev_mon).days // 7 if prev_mon is not None else None
 
         return pd.Series({
             "Days_to_Holiday": days_to,
@@ -871,8 +1068,9 @@ def main() -> int:
     ap.add_argument("block_id", help="Block folder name under TB root")
     ap.add_argument("--tb-root", default=None,
                     help=("TradeBlocks Data root directory. If omitted, walks up "
-                          "from cwd looking for analytics.duckdb + market.duckdb "
-                          "and uses the first ancestor that has both."))
+                          "from cwd looking for a TB 3.0 layout (a market/ folder "
+                          "plus analytics.duckdb either at the root or under "
+                          "database/) and uses the first ancestor that has both."))
     ap.add_argument("--groups-csv", default=None,
                     help=("Path to a specific filter-groups CSV to use "
                           "(e.g. a .V1 / .V2 / .calendar variant). Overrides auto-resolution. "
@@ -987,14 +1185,14 @@ def main() -> int:
     df = df.drop(columns=["_slr_computed"], errors="ignore")
 
     # Merge intraday + OO CSV fallback for VIX_at_Entry / VIX_at_Close / Intra_Move.
-    # Primary = market.intraday (TB-native), fallback = OO trade-log CSV in block folder.
+    # Primary = market_spot (TB-native), fallback = OO trade-log CSV in block folder.
     oo_fallback_df, oo_meta = build_oo_fallback(block_folder)
     df, coverage = coalesce_trade_context(df, intraday_ctx, oo_fallback_df)
 
-    # Gap_Pct is populated by the groups-CSV filter resolver from market.daily
+    # Gap_Pct is populated by the groups-CSV filter resolver from market_daily
     # enrichment (primary). Apply OO CSV fallback (Gap_Pct_oo from coalesce)
     # where primary produced NaN — belt-and-suspenders for blocks on tickers
-    # with limited market.daily coverage (e.g. SPY/IWM pre-2024-03).
+    # with limited market_daily coverage (e.g. SPY/IWM pre-2024-03).
     gap_coverage = {"market_daily": 0, "oo_csv": 0, "missing": 0}
     if "Gap_Pct" in df.columns:
         primary = pd.to_numeric(df["Gap_Pct"], errors="coerce")
@@ -1117,8 +1315,8 @@ def main() -> int:
 
     # Section 2b — TRADE-CONTEXT COVERAGE
     # Sources: VIX_at_Entry / VIX_at_Close / Intra_Move_Pct come from
-    # market.intraday (primary) or OO trade-log CSV (fallback).
-    # Gap_Pct comes from market.daily enrichment (primary) or OO CSV (fallback).
+    # market_spot (primary) or OO trade-log CSV (fallback).
+    # Gap_Pct comes from market_daily enrichment (primary) or OO CSV (fallback).
     # Trades missing in both sources stay NaN and are flagged here.
     print("\nTrade-context coverage")
     any_warnings = False
@@ -1126,7 +1324,7 @@ def main() -> int:
         # Use "primary" / "fallback" / "missing" language — source names differ
         # per column (tb_intraday vs market_daily) but the shape is the same.
         primary_key = "market_daily" if "market_daily" in cov else "tb_intraday"
-        primary_label = "market.daily" if primary_key == "market_daily" else "TB intraday"
+        primary_label = "market_daily" if primary_key == "market_daily" else "TB intraday"
         total = cov.get(primary_key, 0) + cov.get("oo_csv", 0) + cov.get("missing", 0)
         if total == 0:
             continue

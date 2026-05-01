@@ -6,7 +6,7 @@ description: >
   flagged in the groups CSV's "Threshold Analysis Default Report" column),
   then reads the result CSVs + correlations + groups metadata + a local
   preferences file to produce a baseline-anchored summary and a filter
-  shortlist (≤2 per Entry Group) ready to feed to dev-create-datelist.
+  shortlist (≤2 per Entry Group) ready to feed to alex-create-datelist.
   Analysis is grounded in the generated reports; out-of-context insights
   surface as explicit gap warnings. Default metric AvgROR; AvgPCR only on
   explicit user request (and PCR output is exploratory — see README
@@ -16,7 +16,7 @@ compatibility: Orchestrator only. No Python. Depends on four upstream
   entry-filter dev skills.
 metadata:
   author: alex-tradeblocks
-  version: "1.2.2"
+  version: "1.3.0"
 ---
 
 # Entry Filter Analysis
@@ -125,28 +125,30 @@ On any trigger:
 
 ### Net ROR retention — the ONLY definition (non-negotiable)
 
-**"Net ROR retention" ALWAYS means absolute P/L retention, not a per-trade Net ROR ratio.** This is the single most important definition in the skill. Miss it and every `+pts Net ROR` number in the output is wrong by a factor of 2–5×.
+**"Net ROR retention" ALWAYS uses the sum of per-trade ROR values, NOT 1-lot dollar P/L.** ROR (`rom_pct`) is already the per-trade-normalized return on margin — each trade's contribution to "Net ROR" is its own per-trade %, no margin weighting needed. Sum of ROR is the strategy's total return-on-margin contribution; the retention ratio asks "how much of that total ROR survives the filter?"
 
 **Formula — memorize this, do not deviate:**
 
 ```
-Net ROR retention (%) = sum(pl_per_contract for kept trades) / sum(pl_per_contract for ALL trades) * 100
+Net ROR retention (%) = sum(rom_pct for kept trades) / sum(rom_pct for ALL trades) * 100
 ```
 
-- Denominator is always the **baseline total P/L** across all trades in the block. Not the kept subset's total, not the margin-weighted anything.
-- Numerator is the kept subset's total P/L.
-- Bounded roughly at `[negative, ~110%]` in practice — can exceed 100% only when excluded trades have **negative** aggregate P/L (removing losers lifts retention above baseline).
+- Denominator is the **baseline sum-of-ROR** across all trades in the block (= `baseline_avg_rom × total_trades`).
+- Numerator is the kept subset's sum-of-ROR.
+- Equivalently: `(in_avg × in_n) / (baseline_avg × total_n) × 100`. The sweep's `R_T` columns and the heatmap's `pct_baseline` use this formula directly.
+- Bounded roughly at `[negative, ~110%]` in practice — can exceed 100% only when excluded trades have **negative** aggregate ROR (removing losers lifts retention above baseline).
 - Values above ~150% are a **red flag** — you've almost certainly computed the wrong formula. Stop and check.
 
 **What this is NOT:**
 
-- ❌ `(sum_pl_kept / sum_margin_kept) / (sum_pl_base / sum_margin_base)` — this is a per-trade Net ROR **ratio**, not retention. Produces numbers like 300-400% for aggressive filters. **Do not compute this.**
+- ❌ `sum(pl_per_contract for kept) / sum(pl_per_contract for all)` — this is **1-lot dollar P/L retention**, a different metric. Different from Net ROR retention because trades have different margins, so a $1 P/L on a $500-margin trade contributes more ROR than a $1 P/L on a $5,000-margin trade. If you genuinely want 1-lot dollar retention, label it explicitly as "1-lot Net P/L retention", not "Net ROR retention".
+- ❌ `(sum_pl_kept / sum_margin_kept) / (sum_pl_base / sum_margin_base)` — this is a per-trade ROR **ratio of averages**, not a sum-based retention. Produces numbers like 300-400% for aggressive filters. **Do not compute this.**
 - ❌ `avg_rom_kept / avg_rom_base` — similar trap, same wrong scale.
 - ❌ Anything involving margin in the denominator.
 
-**Where the sweep CSV sits:** the sweep's `max_net_ror` column and every `R_T` retention-target column use the absolute-retention formula above. When you compute retention for AND sets from raw trade data, use the SAME formula so downstream comparisons are apples-to-apples.
+**Where the sweep CSV sits:** the sweep's `max_net_ror` column and every `R_T` retention-target column use the sum-of-ROR formula above. When you compute retention for AND sets from raw trade data, use the SAME formula so downstream comparisons are apples-to-apples.
 
-**Self-check before emitting any Baseline or Marginal Impact table:** pick the row with the highest `Net ROR` value. If it exceeds ~110%, re-derive from first principles: `sum_pl_kept / sum_pl_baseline`. If the number changes materially, your code is wrong — fix it before the table ships.
+**Self-check before emitting any Baseline or Marginal Impact table:** pick the row with the highest `Net ROR` value. If it exceeds ~110%, re-derive from first principles: `sum_rom_kept / sum_rom_baseline`. If the number changes materially, your code is wrong — fix it before the table ships.
 
 ### Scope lock (non-negotiable)
 
@@ -240,7 +242,7 @@ Marginal Impact — each row shows the filter's effect on the subset that alread
 | `Keep` | total trades | trades passing this filter | full AND count (constant across Marginal filter rows) |
 | `Out` | 0 | non-null trades failing this filter | trades this filter excludes from the N-1 pool |
 | `%` | 100% (of total) | Keep / total | Keep / N-1 (passthrough rate on N-1 pool) |
-| `Net ROR` | 100% | **absolute P/L retention** = `sum(pl_kept) / sum(pl_baseline) * 100` — see the locked "Net ROR retention" rule above | **full AND absolute P/L retention** (constant across Marginal rows) |
+| `Net ROR` | 100% | **sum-of-ROR retention** = `sum(rom_pct kept) / sum(rom_pct baseline) * 100` — see the locked "Net ROR retention" rule above | **full AND sum-of-ROR retention** (constant across Marginal rows) |
 | `Net ROR +pts` | — | Net ROR − 100 (in absolute pp) | (full AND retention) − (N-1 retention) in absolute pp |
 | `Avg ROR` | baseline avg | subset avg | full AND avg (constant) |
 | `Avg ROR +pts` | — | subset avg − baseline avg | full AND avg − N-1 avg in absolute pp |
@@ -252,7 +254,7 @@ Marginal Impact — each row shows the filter's effect on the subset that alread
 **Consistency checks — run these before emitting either table:**
 
 1. **Marginal row accounting:** every filter row must satisfy `N-1 = Keep + Out`. If it doesn't, the pool computation is wrong.
-2. **Net ROR sanity:** no row's `Net ROR` should exceed ~110% unless excluded trades have a genuinely negative aggregate P/L. Values of 130%+ almost always mean the per-trade-ratio trap (see the locked "Net ROR retention" rule). Re-derive as `sum_pl_kept / sum_pl_baseline` and confirm before shipping.
+2. **Net ROR sanity:** no row's `Net ROR` should exceed ~110% unless excluded trades have a genuinely negative aggregate ROR. Values of 130%+ almost always mean the per-trade-ratio trap (see the locked "Net ROR retention" rule). Re-derive as `sum_rom_kept / sum_rom_baseline` and confirm before shipping.
 3. **Baseline row always reads 100% Net ROR.** If your baseline row is showing something else, your formula is wrong.
 
 **How to read the two tables together:** Baseline Impact answers "what does each filter do on its own?" Marginal Impact answers "what does each filter contribute to the set we're actually shipping?" A filter that reads strong in Baseline but shows `Out=0, +pts=0` in Marginal is redundant inside the AND set — its Baseline effect is driven by a correlated filter already in the set. See the Preferences file's Global learnings for more on interpreting Marginal=0 patterns.
@@ -422,7 +424,7 @@ remove by hand-editing.
 - **Don't silently widen the per-group cap above 2.** If the user wants more, they ask explicitly and accept the correlation-risk warning.
 - **Don't skip the correlation cross-check.** Even one high-r pair in the recommendation undermines the shortlist's validity.
 - **Don't recompute metrics that the CSVs already hold.** Read, don't re-derive — the sweep CSVs are the source of truth for every metric.
-- **Don't invent a custom Net ROR formula for the AND set.** When the AND set forces you to compute from raw trade data (because the sweep is per-single-filter), use the exact same formula the sweep uses: `sum(pl_kept) / sum(pl_baseline) * 100`. Do not divide by margin totals. Do not take a ratio of average per-trade ROR. See the locked "Net ROR retention" rule — this is the bug that costs users real decisions.
+- **Don't invent a custom Net ROR formula for the AND set.** When the AND set forces you to compute from raw trade data (because the sweep is per-single-filter), use the exact same formula the sweep uses: `sum(rom_pct kept) / sum(rom_pct baseline) * 100`. Do not divide by margin totals. Do not take a ratio of average per-trade ROR. Do not substitute `sum(pl_per_contract)` (that's 1-lot dollar P/L retention, a different metric). See the locked "Net ROR retention" rule — this is the bug that costs users real decisions.
 - **Don't add Entry Group headers inside Baseline or Marginal tables.** Clean flat tables only. Grouping drives *selection logic* (per-group cap), not presentation.
 - **Don't auto-save preferences.** Every learning requires explicit user confirmation AND a scope choice before being written.
 - **Don't overwrite the preferences file.** Appends only. Hand-edit to remove or correct.

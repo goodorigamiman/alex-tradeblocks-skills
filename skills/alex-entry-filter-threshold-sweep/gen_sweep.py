@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dev-entry-filter-threshold-sweep — CLI driver.
+alex-entry-filter-threshold-sweep — CLI driver.
 
 Pre-computes sweep results for every continuous AND categorical entry filter
 on a block, producing two sibling CSVs that downstream skills (heatmap, pareto,
@@ -63,7 +63,8 @@ EXIT_FILTER_BY_ERROR = 6
 REQUIRED_GROUPS_COLS = {"Index", "Filter", "Short Name", "CSV Column", "Entry Group", "Filter Type"}
 MIN_TRADES = 10
 MIN_TRADE_PCT = 10.0   # % of total
-MAX_NULL_FRAC = 0.10   # skip filters with >10% nulls
+MAX_NULL_FRAC = 0.20   # skip filters with >20% nulls
+MIN_COVERAGE_YEARS = 2.0   # ...unless populated rows span at least this many years
 
 DIRECTIONS = ["low threshold", "high threshold", "combo"]
 VARIANTS = ["tightest", "max_avg"]
@@ -490,16 +491,28 @@ def sweep_categorical_filter(
     Weeks_to_Holiday / Weeks_from_Holiday. Rows ordered by natural category
     sort (numeric asc; "4+" last).
     """
-    # Bucket roms and pcrs + win-count per category value. Exclude nulls
-    # (NULL means data missing, not a valid category).
+    # Bucket roms and pcrs + win-count per category value. NULL trades go into
+    # a separate `nan_*` bucket — they're excluded from `in_sample` (you can't
+    # say a trade IS in category K when its category is unknown) but are
+    # INCLUDED in `out_sample` for every category. Rationale: at OO runtime
+    # every trade has a defined value; the NaN we see is a build-side data
+    # gap, and the runtime filter `col != K` would keep those trades. Without
+    # this, in + out understates baseline by the NaN contribution and an
+    # exclusion filter that should LIFT retention can read as a small loss
+    # (e.g. excluding a net-negative month shows -1.8 pp instead of +3.6 pp).
     buckets: Dict[str, Tuple[List[float], List[float]]] = {}
+    nan_roms: List[float] = []
+    nan_pcrs: List[float] = []
     for t in trades:
         raw = (t.get(col) or "").strip()
-        if not raw or raw.lower() in ("null", "none", "nan"):
-            continue
+        is_nan = (not raw) or raw.lower() in ("null", "none", "nan")
         r = parse_float(t.get("rom_pct"))
         p = parse_float(t.get("pcr_pct"))
         if r is None:
+            continue
+        if is_nan:
+            nan_roms.append(r)
+            nan_pcrs.append(p if p is not None else 0.0)
             continue
         # Aggregate >= 4 bucket if applicable.
         cat_key = raw
@@ -525,8 +538,10 @@ def sweep_categorical_filter(
     rows: List[Dict] = []
     for cat in sorted(buckets.keys(), key=_sort_key_for):
         in_roms, in_pcrs = buckets[cat]
-        out_roms = [r for k, (rs, _) in buckets.items() if k != cat for r in rs]
-        out_pcrs = [p for k, (_, ps) in buckets.items() if k != cat for p in ps]
+        # out = union of every OTHER category's bucket + NaN bucket. NaN trades
+        # would be defined at OO runtime; the filter `col != cat` would keep them.
+        out_roms = [r for k, (rs, _) in buckets.items() if k != cat for r in rs] + nan_roms
+        out_pcrs = [p for k, (_, ps) in buckets.items() if k != cat for p in ps] + nan_pcrs
         label = _label_for(col, cat)
         in_wr = wr(in_roms)
         out_wr = wr(out_roms)
@@ -692,7 +707,8 @@ def main() -> int:
     _gl = abs(sum(r for r in roms_all_nn if r < 0))
     baseline_pf = _gp / _gl if _gl > 0 else float("inf")
 
-    # Build per-filter arrays, skipping filters whose column is missing or has >10% nulls.
+    # Build per-filter arrays, skipping filters whose column is missing or whose
+    # null fraction exceeds MAX_NULL_FRAC AND populated rows span < MIN_COVERAGE_YEARS.
     filter_data: Dict[str, Tuple[List[float], List[float], List[float]]] = {}
     skipped_missing: List[str] = []
     skipped_null: List[str] = []
@@ -703,8 +719,25 @@ def main() -> int:
             continue
         vals, roms, pcrs, nulls = build_filter_arrays(trades, col)
         if nulls > total_trades * MAX_NULL_FRAC:
-            skipped_null.append(col)
-            continue
+            # Date-span fallback: keep if populated rows span ≥ MIN_COVERAGE_YEARS.
+            populated_dates = []
+            for t in trades:
+                if parse_float(t.get(col)) is None:
+                    continue
+                d = (t.get("date_opened") or "").strip()
+                if d:
+                    populated_dates.append(d)
+            span_years = 0.0
+            if populated_dates:
+                try:
+                    from datetime import datetime
+                    dts = [datetime.fromisoformat(d.split(" ")[0]) for d in populated_dates]
+                    span_years = (max(dts) - min(dts)).days / 365.25
+                except Exception:
+                    span_years = 0.0
+            if span_years < MIN_COVERAGE_YEARS:
+                skipped_null.append(col)
+                continue
         filter_data[col] = (vals, roms, pcrs)
 
     if not filter_data:
@@ -848,7 +881,7 @@ def main() -> int:
     print("\nScope")
     print(f"  Continuous filters in scope:    {len(filter_data)}")
     if skipped_null:
-        print(f"  Skipped (>10% nulls):           {', '.join(skipped_null)}")
+        print(f"  Skipped (>{int(MAX_NULL_FRAC*100)}% nulls AND <{MIN_COVERAGE_YEARS:.0f}y span):  {', '.join(skipped_null)}")
     if skipped_missing:
         print(f"  Skipped (column not in data):   {', '.join(skipped_missing)}")
     print(f"  Categorical filters in scope:   {len(cat_cols_processed)} ({', '.join(cat_cols_processed) if cat_cols_processed else '—'})")

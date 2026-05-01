@@ -9,11 +9,11 @@ description: >
   per category × metric, columns in_sample and out_sample for inclusion vs
   exclusion impact). Downstream skills (heatmap, pareto, future consumers)
   read these CSVs instead of recomputing. Reads only two block-local CSVs;
-  never builds data itself. Defers upstream to dev-entry-filter-build-data.
+  never builds data itself. Defers upstream to alex-entry-filter-build-data.
 compatibility: Python 3 standard library only. No MCP, no DuckDB, no numpy.
 metadata:
   author: alex-tradeblocks
-  version: "1.3.1"
+  version: "1.3.2"
 ---
 
 # Entry Filter Threshold Sweep

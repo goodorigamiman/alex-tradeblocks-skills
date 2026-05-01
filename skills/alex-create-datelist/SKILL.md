@@ -5,10 +5,10 @@ description: >
   User specifies a field + threshold or custom criteria. Output is an OO-compatible ISO datelist
   with descriptive label, ready to copy-paste. Reads from shared entry_filter_data.csv when available.
   Usage as whitelist or blackout is contextual — the label provides the necessary info.
-compatibility: Reads `entry_filter_data.csv` directly — no MCP calls from this skill. Requires that upstream `dev-entry-filter-build-data` has already produced the CSV (which itself needs the TradeBlocks MCP server). Pure Python, standard library only.
+compatibility: Reads `entry_filter_data.csv` directly — no MCP calls from this skill. Requires that upstream `alex-entry-filter-build-data` has already produced the CSV (which itself needs the TradeBlocks MCP server). Pure Python, standard library only.
 metadata:
   author: alex-tradeblocks
-  version: "1.10.1"
+  version: "1.10.2"
 ---
 
 # Create Datelist

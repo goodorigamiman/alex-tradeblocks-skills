@@ -2,17 +2,21 @@
 name: alex-entry-filter-build-data
 description: >
   Build the shared entry_filter_data.csv for a block. Reads the filter groups
-  registry (block-local override if present, else the shared default), pulls trade and
-  market data via the TradeBlocks data layer, computes per-trade 1-lot economics
-  (margin, premium, P/L, ROM%, PCR%), populates every filter column declared in the
-  groups CSV, and enriches with market holiday proximity. Writes to
-  {block}/alex-tradeblocks-ref/entry_filter_data.csv and reports which filter columns
-  were populated vs skipped. Shared CSV for heatmap, pareto, parallel coords, threshold,
-  and holiday enrichment skills.
-compatibility: Requires TradeBlocks MCP server with trade data and market data loaded. Python 3 with pandas and duckdb.
+  registry (block-local override if present, else the shared default), pulls trade
+  data from analytics.duckdb and market data from the 3.0 Parquet datasets under
+  market/ (spot, enriched, enriched_context), computes per-trade 1-lot economics
+  (margin, premium, P/L, ROM%, PCR%), populates every filter column declared in
+  the groups CSV, and enriches with market holiday proximity. Writes to
+  {block}/alex-tradeblocks-ref/entry_filter_data.csv and reports which filter
+  columns were populated vs skipped. Shared CSV for heatmap, pareto, parallel
+  coords, threshold, and holiday enrichment skills.
+compatibility: Requires TradeBlocks 3.0 (Parquet market data under market/) plus a
+  populated analytics.duckdb (either at TB root or under database/, whichever the
+  active MCP writes to). Python 3 with pandas and duckdb. Read-only; the legacy
+  market.duckdb is not used.
 metadata:
   author: alex-tradeblocks
-  version: "1.1.1"
+  version: "1.2.0"
 ---
 
 # Build Entry Filter Data CSV
@@ -63,9 +67,11 @@ These three columns follow a **primary → fallback → blank** resolution:
 
 ## Prerequisites
 
-- TradeBlocks MCP server running with trade data for the target block and market data loaded (VIX, VIX9D, VIX3M, underlying ticker daily bars, `market._context_derived`).
+- TradeBlocks 3.0 layout: Parquet datasets under `market/` (spot, enriched/ticker=*, enriched/context) for the tickers your block uses (VIX, VIX9D, VIX3M, the underlying), plus a populated `analytics.duckdb` (root or `database/`) holding the block's trade rows.
 - A shared `entry_filter_groups.*.csv` is available (either block-local, or in the plugin's `_shared/` folder). The driver resolves this automatically.
 - Python 3 with `pandas` and `duckdb` installed.
+
+The legacy `market.duckdb` is NOT required — the driver does not attach it. If only the legacy DB exists (a pre-3.0 install), market columns will be all-null and the script will report low coverage on the sufficiency check.
 
 ## Process
 
@@ -156,7 +162,25 @@ Once the CSV exists, any of the following skills can read it without rebuilding:
 
 ## Data Access
 
-The Python driver uses **read-only DuckDB** (per CLAUDE.md's standing convention for ad-hoc Python analysis: open inside a `with` block, `read_only=True`, release immediately). The groups-CSV-driven query pattern means no monolithic SQL — each source table is queried independently and joined in pandas. This mirrors the chunked approach that MCP `run_sql` would require, so the skill can be ported to pure MCP later if needed. The driver never holds a write lock.
+The Python driver uses **read-only DuckDB** (per CLAUDE.md's standing convention for ad-hoc Python analysis: open inside a `with` block, `read_only=True`, release immediately). The driver opens `analytics.duckdb` for trade rows and registers temp views over the Parquet datasets in `market/` for market data — the same view definitions the MCP server registers, so query results match `mcp__tradeblocks-dev__run_sql`. The Parquet datasets are lock-free, so the script reads safely while the MCP container runs. The driver never holds a write lock.
+
+**3.0 cutover (1.2.0-dev):** prior versions attached `market.duckdb` and read legacy tables (`market.daily`, `market.intraday`, `market._context_derived`). That backend is now frozen per CLAUDE.md. The 1.2.0 driver registers these temp views over Parquet:
+
+| View | Source | Notes |
+|---|---|---|
+| `market_spot` | `market/spot/**/*.parquet` (Hive) | 1-min OHLCV bars; replaces `market.intraday` |
+| `market_spot_daily` | aggregated from `market_spot` | RTH daily OHLCV; mirrors MCP's `market.spot_daily`. Filters out non-trading days (rows where every bar is zero-filled). |
+| `market_enriched` | `market/enriched/ticker=*/data.parquet` | Per-ticker indicators (RSI, ATR, ivr, ivp, etc.). Filtered to weekdays only. |
+| `market_enriched_context` | `market/enriched/context/data.parquet` | Cross-ticker regime (Vol_Regime, Term_Structure_State, etc.). Filtered to weekdays. |
+| `market_daily` | `market_spot_daily FULL OUTER JOIN market_enriched` | Legacy-compat fat-table view; query templates unchanged. |
+
+The user-facing TB Table values in the groups CSV (`market.daily`, `market._context_derived`, `market.intraday`) are unchanged — they remain the input format. The driver translates them to the 3.0 view names internally. Existing block-local groups CSVs do not need editing.
+
+**Path resolution.** `analytics.duckdb` is auto-resolved between two layouts: prod-Docker writes to `database/analytics.duckdb`; dev host process writes to root-level `analytics.duckdb`. When both exist the driver picks the more recently modified one. No flag needed.
+
+**Known data quality limitations** (upstream Parquet, not script bugs):
+- Spot bars at session start (09:30) are sometimes zero-filled for index tickers (VIX, VIX9D, VIX3M). Daily aggregations skip zeros via `NULLIF`, so the daily view returns the first real bar of the session.
+- Enriched indicators may show `-100` or `0` sentinel values on dates where lookback windows extend past the dataset start (e.g., `Realized_Vol_5D` early in the dataset). These propagate to the output CSV as-is and the null-threshold filter catches columns where they dominate.
 
 ## File Dependencies
 

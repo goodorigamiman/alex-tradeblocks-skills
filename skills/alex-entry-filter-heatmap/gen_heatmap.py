@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dev-entry-filter-heatmap — CLI driver.
+alex-entry-filter-heatmap — CLI driver.
 
 Builds the entry-filter retention heatmap for a block. Reads only two block-local
 CSVs; never builds data itself.
@@ -614,22 +614,38 @@ def _generate(config):
     cat_sweep = load_categorical_sweep(pathlib.Path(cat_sweep_csv), metric="AvgROR")
 
     def _stats_from_csv(n, avg, wr_pct):
-        """Rebuild the shape downstream HTML rendering expects."""
+        """Rebuild the shape downstream HTML rendering expects.
+
+        net_ror_impact_pp = pct_baseline - 100. Signed delta of Net ROR retention
+        vs baseline 100%. Negative = filter loses baseline edge; positive = filter
+        retains > baseline because excluded trades had net-negative aggregate ROR.
+
+        pct_trades_impact_pp = pct_trades - 100. Signed delta of trade-share vs
+        baseline 100%. Always negative for inclusion filters (you can only keep
+        ≤ all trades). Pairs with net_ror_impact_pp to reveal selectivity:
+        if |net impact| < |trade impact|, the filter discards trades that carried
+        less than their fair share of edge (a "good cut"). If they're equal,
+        the cut is neutral.
+
+        Both metrics are applied identically to in-group and out-group cells —
+        the same renderer handles both sides."""
         if avg is None or n <= 0:
             return None
         net_ror = avg * n
         pct_trades = n / total_trades * 100 if total_trades else 0.0
         pct_baseline = (net_ror / baseline_net_ror * 100) if baseline_net_ror else 0.0
-        net_bump_pp = pct_baseline - pct_trades
+        net_ror_impact_pp = pct_baseline - 100.0
+        pct_trades_impact_pp = pct_trades - 100.0
         return {
-            "trades":       n,
-            "pct_trades":   pct_trades,
-            "avg_rom":      avg,
-            "delta_pp":     avg - baseline_avg_rom,
-            "net_ror":      net_ror,
-            "pct_baseline": pct_baseline,
-            "net_bump_pp":  net_bump_pp,
-            "wr":           wr_pct if wr_pct is not None else 0.0,
+            "trades":                 n,
+            "pct_trades":             pct_trades,
+            "avg_rom":                avg,
+            "delta_pp":               avg - baseline_avg_rom,
+            "net_ror":                net_ror,
+            "pct_baseline":           pct_baseline,
+            "net_ror_impact_pp":      net_ror_impact_pp,
+            "pct_trades_impact_pp":   pct_trades_impact_pp,
+            "wr":                     wr_pct if wr_pct is not None else 0.0,
         }
 
     binary_results: Dict = {}
@@ -852,6 +868,11 @@ def _generate(config):
         sel = " selected" if v == sweep_variant else ""
         h(f'<option value="{v}"{sel}>{v}</option>')
     h('</select>')
+    # Combo-column toggle for Discovery Map. Default = checked. Combo th/td
+    # carry a `disc-combo-col` class; a JS handler hides them when unchecked.
+    # Scope is Discovery Map only — By Filter Group keeps combo rows since
+    # they're part of the per-filter visual rhythm there.
+    h('<label for="sel-show-combo" style="margin-left:14px"><input type="checkbox" id="sel-show-combo" checked> Include combo</label>')
     h('<span class="ctrl-note">Applies to Discovery Map + By Filter Group. Color scale &amp; column sort are fixed across toggles for stable visual comparison.</span>')
     h('</div>')
     h('<table class="disc-table"><thead><tr><th style="writing-mode:horizontal-tb;transform:none;height:auto"></th>')
@@ -868,15 +889,17 @@ def _generate(config):
         header_line = f"{name} ({col}) — {d}"
         tti = meta.get("tool_tip_info", "")
         th_title = f"{header_line}\n\n{tti}" if tti else header_line
-        h(f'<th title="{esc(th_title)}">{esc(short)}{sym}</th>')
+        cls = ' class="disc-combo-col"' if d == "Combo" else ""
+        h(f'<th{cls} title="{esc(th_title)}">{esc(short)}{sym}</th>')
     h('</tr></thead><tbody>')
     for target in TARGETS:
         h(f'<tr><td class="disc-label">{target}r%</td>')
         for idx, d in disc_columns:
             data_key = f"{idx}|{d}|{target}"
             res = filter_results.get((idx, d), {}).get(target)
+            combo_cls_part = " disc-combo-col" if d == "Combo" else ""
             if res is None:
-                h(f'<td class="dim" data-disc="{data_key}" style="background:#16213e"></td>')
+                h(f'<td class="dim{combo_cls_part}" data-disc="{data_key}" style="background:#16213e"></td>')
             else:
                 color = delta_to_color(res["delta_pp"], max_pos_delta, max_neg_delta)
                 meta = filter_meta[idx]
@@ -886,7 +909,8 @@ def _generate(config):
                 tip = (f"{first_line}\n"
                        f"{sweep_metric}: {res['avg_rom']:.2f}% ({fmt_pp(res['delta_pp'])})\n"
                        f"Retention target: \u2265{target}%")
-                h(f'<td data-disc="{data_key}" style="background:{color}" title="{esc(tip)}"></td>')
+                cls_attr = ' class="disc-combo-col"' if d == "Combo" else ""
+                h(f'<td{cls_attr} data-disc="{data_key}" style="background:{color}" title="{esc(tip)}"></td>')
         h('</tr>')
     h('</tbody></table>')
 
@@ -960,24 +984,32 @@ def _generate(config):
     h('<table class="cat-table"><thead><tr>')
     h('<th style="text-align:left" rowspan="2">Filter</th>')
     h('<th rowspan="2">Category</th>')
-    h('<th colspan="3" class="bc-group bc-in">In Group (==)</th>')
-    h('<th colspan="3" class="bc-group bc-out">Out Group (!=)</th>')
+    h('<th colspan="4" class="bc-group bc-in">In Group (==)</th>')
+    h('<th colspan="4" class="bc-group bc-out">Out Group (!=)</th>')
     h('</tr><tr>')
     for _ in (0, 1):
-        # +avg pts = delta of subset's Avg ROM vs baseline (pp)
-        # +net ROM = subset's share-of-edge minus its share-of-trades (pp) —
-        # positive means the subset carries disproportionate Net ROR contribution.
-        h('<th>Avg ROM</th><th>+avg pts</th><th>+net ROM</th>')
+        # Per side: 4 metrics — the in-group's per-trade ROR, plus 3 baseline-
+        # relative impacts (each = subset value - baseline value, in pp).
+        # Trade share is NOT shown — only its impact (kept_pct - 100) which
+        # carries the same information in baseline-relative form. Reading guide:
+        # • Avg ROR              — the subset's per-trade Return on Margin
+        # • Avg ROR impact       — Avg ROR(subset) - Avg ROR(baseline)
+        # • Net ROR impact       — sum-of-ROR retention% - 100. Negative when
+        #                          the filter removes profitable trades.
+        # • Trades impact        — kept_count_pct - 100. Always negative for
+        #                          an inclusion filter (keep count <= total).
+        h('<th>Avg ROR</th><th>Avg ROR impact</th><th>Net ROR impact</th><th>Trades impact</th>')
     h('</tr></thead><tbody>')
 
-    def _render_side_cells(bc_attr, stats, color, avg_pp, net_pp, tip):
-        """Emit the three cells for one side (In or Out)."""
+    def _render_side_cells(bc_attr, stats, color, avg_pp, net_pp, trades_pp, tip):
+        """Emit the four cells for one side (In or Out)."""
         if stats is None:
-            h('<td class="dim" colspan="3">no trades</td>')
+            h('<td class="dim" colspan="4">no trades</td>')
             return
         h(f'<td class="rom-cell" data-bc="{esc(bc_attr)}" style="background:{color}" title="{esc(tip)}">{stats["avg_rom"]:.2f}%</td>')
         h(f'<td style="background:{color}">{avg_pp}</td>')
         h(f'<td style="background:{color}">{net_pp}</td>')
+        h(f'<td style="background:{color}">{trades_pp}</td>')
 
     def _fmt_expr(col, raw, op):
         """Build a display expression. '>=4' raw is the only non-equality case."""
@@ -987,13 +1019,17 @@ def _generate(config):
             return f"{col} < {raw[2:]}"
         return f"{col} {op} {raw}"
 
-    def _bc_tooltip(expr, stats, avg_pp, net_pp):
-        # Include absolute Net ROM and its bump alongside Avg ROM details, plus
-        # trade count and WR for context on both sides of the comparison.
+    def _bc_tooltip(expr, stats, avg_pp, net_pp, trades_pp):
+        # Four-metric tooltip aligned with the four visible cells per side:
+        # in-group Avg ROR, Avg ROR impact, Net ROR impact, Trades impact.
+        # Trade share is omitted — only its impact (kept_pct - 100) appears.
+        # WR is retained as standard context (not in the impact-set but useful
+        # for cross-checking selectivity).
         return (f"{expr}  |  "
-                f"AvgROM {stats['avg_rom']:.2f}% ({avg_pp})  |  "
-                f"Net ROM {stats['net_ror']:.1f}% = {stats['pct_baseline']:.1f}% of baseline ({net_pp})  |  "
-                f"{stats['trades']} trades ({stats['pct_trades']:.1f}%)  |  "
+                f"Avg ROR {stats['avg_rom']:.2f}% (impact {avg_pp})  |  "
+                f"Net ROR impact {net_pp}  |  "
+                f"Trades impact {trades_pp}  |  "
+                f"{stats['trades']} trades  |  "
                 f"WR {stats['wr']:.1f}%")
 
     def render_breakdown(results_dict):
@@ -1007,25 +1043,27 @@ def _generate(config):
                 out = data.get("out")
                 in_color = delta_to_color(data["delta_pp"], max_pos_delta, max_neg_delta)
                 in_avg_pp = fmt_pp(data["delta_pp"])
-                in_net_pp = fmt_pp(data["net_bump_pp"])
+                in_net_pp = fmt_pp(data["net_ror_impact_pp"])
+                in_trades_pp = fmt_pp(data["pct_trades_impact_pp"])
                 out_color = delta_to_color(out["delta_pp"], max_pos_delta, max_neg_delta) if out else "#16213e"
                 out_avg_pp = fmt_pp(out["delta_pp"]) if out else ""
-                out_net_pp = fmt_pp(out["net_bump_pp"]) if out else ""
+                out_net_pp = fmt_pp(out["net_ror_impact_pp"]) if out else ""
+                out_trades_pp = fmt_pp(out["pct_trades_impact_pp"]) if out else ""
                 # data-bc payload: idx | col | raw | label | mode (in|out)
                 in_attr  = f'{idx}|{col}|{raw}|{label}|in'
                 out_attr = f'{idx}|{col}|{raw}|{label}|out'
                 in_expr  = _fmt_expr(col, raw, "==")
                 out_expr = _fmt_expr(col, raw, "!=")
-                in_tip = _bc_tooltip(in_expr, data, in_avg_pp, in_net_pp)
-                out_tip = _bc_tooltip(out_expr, out, out_avg_pp, out_net_pp) if out else ""
+                in_tip = _bc_tooltip(in_expr, data, in_avg_pp, in_net_pp, in_trades_pp)
+                out_tip = _bc_tooltip(out_expr, out, out_avg_pp, out_net_pp, out_trades_pp) if out else ""
                 if first:
                     h(f'<tr>{label_cell(meta, rowspan=n_cats)}')
                     first = False
                 else:
                     h('<tr>')
                 h(f'<td>{esc(label)}</td>')
-                _render_side_cells(in_attr, data, in_color, in_avg_pp, in_net_pp, in_tip)
-                _render_side_cells(out_attr, out, out_color, out_avg_pp, out_net_pp, out_tip)
+                _render_side_cells(in_attr, data, in_color, in_avg_pp, in_net_pp, in_trades_pp, in_tip)
+                _render_side_cells(out_attr, out, out_color, out_avg_pp, out_net_pp, out_trades_pp, out_tip)
                 h('</tr>')
 
     render_breakdown(binary_results)
@@ -1377,12 +1415,39 @@ document.addEventListener('click', (e) => {
   togglePick(cell, attr);
 });
 
+// Combo-column toggle: hide every <th>/<td> with class .disc-combo-col when
+// the checkbox is unchecked. State persists across reloads via localStorage.
+const COMBO_KEY = 'heatmap-show-combo';
+function applyComboVisibility(show) {
+  document.querySelectorAll('.disc-combo-col').forEach(el => {
+    el.style.display = show ? '' : 'none';
+  });
+}
+const comboToggle = document.getElementById('sel-show-combo');
+if (comboToggle) {
+  // Restore previous state (default = show).
+  const stored = localStorage.getItem(COMBO_KEY);
+  const showInitial = stored === null ? true : stored === 'true';
+  comboToggle.checked = showInitial;
+  applyComboVisibility(showInitial);
+  comboToggle.addEventListener('change', () => {
+    const show = comboToggle.checked;
+    localStorage.setItem(COMBO_KEY, String(show));
+    applyComboVisibility(show);
+  });
+}
+
 // Initial load
 loadPicks();
 renderPanel();
 applySelectedClassToCells();
 ''')
     h('</script>')
+    # Bottom spacer so the user can scroll past the last data row even when
+    # the floating selections panel (bottom-right, fixed) covers it. 60vh
+    # gives roughly half a viewport of breathing room — enough that the last
+    # categorical row is fully readable when the panel has many picks.
+    h('<div style="height:60vh" aria-hidden="true"></div>')
     h('</body></html>')
 
     with open(out_html, "w", encoding="utf-8") as f:

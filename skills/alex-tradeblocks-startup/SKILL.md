@@ -1,10 +1,10 @@
 ---
 name: alex-tradeblocks-startup
-description: TradeBlocks startup check (3.0 Parquet-mode aware). Verifies MCP server, market data provider, skills (published + local dev), analytics DuckDB, Parquet market data, enrichment, and optional SqueezeMetrics reference data. Status block splits Parquet and DuckDB into their own rows so each backend's health is visible at a glance. Always tail-ends the report with a Root Organization memory-refresher (database files, market Parquet layout, alex-data, dev workspace, MCP files) so the user re-anchors on the folder layout at session start. Auto-starts services if down. Reads `alex_tradeblocks_startup_config.md` in the TradeBlocks Data root for user-specific paths and settings; on first run, discovers values and writes the config. Use at session start or when TradeBlocks tooling feels broken.
-compatibility: Requires Docker + TradeBlocks MCP 3.0+ in Parquet mode. Market data probes route through the MCP (`run_sql` over registered views that read Parquet). Market data provider (ThetaData, Massive, or other) and dev workspace layout are discovered from the local config — no assumptions baked in.
+description: TradeBlocks startup check (3.0 Parquet-mode aware). Verifies the MCP primary backend (auto-detected from `.mcp.json` — host fork or Docker, whichever the bare `tradeblocks` key points at), reports any secondary backends as informational only, checks market data provider, skills (published + local dev), analytics DuckDB, Parquet market data, enrichment, and optional SqueezeMetrics reference data. Intent-aware auto-start for the host MCP — starts it only when neither port has a backend running (cold-start signal), and skips auto-start when a secondary (e.g. Docker) is already up (signal that the user wants to use the secondary). Auto-starts ThetaTerminal if down. Never auto-starts Docker — Docker is treated as opt-in (the user starts it explicitly when testing a published version). Status block splits Parquet and DuckDB into their own rows so each backend's health is visible at a glance. Always tail-ends the report with a Root Organization memory-refresher (database files, market Parquet layout, alex-data, dev workspace, MCP files) so the user re-anchors on the folder layout at session start. Reads `alex_tradeblocks_startup_config.md` in the TradeBlocks Data root for user-specific paths and settings; on first run, discovers values and writes the config. Use at session start or when TradeBlocks tooling feels broken.
+compatibility: Requires TradeBlocks MCP 3.0+ in Parquet mode. Docker is optional (only required when the user's `.mcp.json` primary points at a Docker container, OR when the user wants to test the published version). Market data probes route through the MCP (`run_sql` over registered views that read Parquet). Market data provider (ThetaData, Massive, or other), host MCP start command + source dir, and dev workspace layout are all discovered from the local config — no assumptions baked in.
 metadata:
   author: alex-tradeblocks
-  version: "5.2.0"
+  version: "5.5.0"
 ---
 
 # Dev TradeBlocks Startup
@@ -100,42 +100,106 @@ Don't try to recover these — they require user setup per the TradeBlocks insta
 
 There are **two independent layers** to check, and both must pass for Claude to actually call MCP tools in the current session:
 
-**Layer A — Server health (infrastructure):** Docker daemon + MCP container + port reachable.
+**Layer A — Primary backend health (infrastructure):** the URL the bare `tradeblocks` key in `.mcp.json` points at must be reachable. The backend behind it can be either a host process (Node fork on a dev port) or a Docker container (npm-published image) — auto-detected.
 **Layer B — Session mounting (Claude client):** `.mcp.json` discoverable at session cwd + server approved + MCP client connected at session bootstrap.
 
-Layer B is evaluated **once at Claude session start** and never retried mid-session. If Claude had to auto-start Docker in Layer A, Layer B has already failed silently — tools will not appear without a **Claude Code restart** (quit and relaunch Claude Code — not a computer restart).
+Layer B is evaluated **once at Claude session start** and never retried mid-session. If Claude had to start a backend in Layer A this session, Layer B has already failed silently — tools will not appear without a **Claude Code restart** (quit and relaunch Claude Code — not a computer restart).
 
-### Pre-flight: derive endpoint + server key from `.mcp.json` (don't hardcode)
+### Pre-flight: derive primary endpoint from `.mcp.json` (don't hardcode)
 
-Before probing, parse `$TB_ROOT/.mcp.json` once and extract:
+Before probing, parse `$TB_ROOT/.mcp.json` once. **The primary backend is whichever URL the bare `tradeblocks` key points at.** Other keys (e.g. `tradeblocks-published`, `tradeblocks-dev`) are informational secondaries — Layer C reports them but Layer A does not block on them.
 
 ```python
 import json, pathlib, re
 mcp_json = json.loads((pathlib.Path(tb_root) / ".mcp.json").read_text())
-# First server entry — Claude Code supports multiple but TradeBlocks configs use one
-server_key = next(iter(mcp_json["mcpServers"]))           # e.g. "tradeblocks"
-server_cfg = mcp_json["mcpServers"][server_key]
-# Endpoint varies: stdio (npx mcp-remote <url>), http, streamable-http, etc.
-# Extract URL from args or url field:
-url = server_cfg.get("url") or next(
-    (a for a in server_cfg.get("args", []) if a.startswith("http")), None)
-port = int(re.search(r":(\d+)", url).group(1)) if url else None
-mcp_path = re.search(r"https?://[^/]+(/.*)$", url).group(1) if url else "/mcp"
+# Primary = bare "tradeblocks" key (the default Claude tool namespace)
+# Fall back to the first entry if "tradeblocks" doesn't exist (unusual but valid)
+primary_key = "tradeblocks" if "tradeblocks" in mcp_json["mcpServers"] else next(iter(mcp_json["mcpServers"]))
+primary_cfg = mcp_json["mcpServers"][primary_key]
+primary_url = primary_cfg.get("url") or next(
+    (a for a in primary_cfg.get("args", []) if a.startswith("http")), None)
+primary_port = int(re.search(r":(\d+)", primary_url).group(1)) if primary_url else None
+primary_mcp_path = re.search(r"https?://[^/]+(/.*)$", primary_url).group(1) if primary_url else "/mcp"
 ```
 
-Use `{server_key}`, `{port}`, and `{mcp_path}` below — never hardcode `tradeblocks` or `3100`. If `.mcp.json` is missing or malformed, flag and skip Layer A probing (Layer B will still detect the issue as "no `.mcp.json` found").
+Use `{primary_key}`, `{primary_port}`, and `{primary_mcp_path}` below — never hardcode `tradeblocks` or `3100`. If `.mcp.json` is missing or malformed, flag and skip Layer A probing (Layer B will still detect the issue as "no `.mcp.json` found").
 
-### Layer A — Server health
+### Layer A — Primary backend health
 
-1. **Docker daemon:** `docker info`. If down, start it platform-appropriately:
-   - **macOS** (`uname` → `Darwin`): `open -a Docker`
-   - **Linux**: `systemctl start docker` (may require sudo; if it prompts, stop and ask user)
-   - **Windows**: `Start-Service docker` via PowerShell, or tell user to launch Docker Desktop manually
-   Poll every 3s up to 30s for `docker info` to succeed. Record to recovery log. **Do not assume a platform** — detect with `platform.system()` or `uname`.
-2. **Compose file exists:** verify `$TB_ROOT/{mcp_compose_dir}/docker-compose.yml` is present. If missing, this is a fresh install — tell the user: *"No MCP compose file found at `{path}`. See TradeBlocks MCP install docs: https://github.com/davidromeo/tradeblocks"*. Stop Layer A here.
-3. **MCP container:** `docker ps --filter "name={mcp_container_name}" --format "{{.Status}}"`. If not running, `cd $TB_ROOT/{mcp_compose_dir} && docker compose up -d`. Wait 5s for port binding.
-4. **HTTP endpoint reachable:** `curl -s -m 3 -o /dev/null -w "%{http_code}" http://localhost:{port}{mcp_path}`. Any response (even 4xx) confirms the port is bound. Timeout means the container isn't serving yet — wait another 5s and retry once.
-5. If still failing, tail `docker compose logs --tail=40` and surface to the user.
+The probe is the same regardless of whether the backend is a host process or a Docker container — the user's `.mcp.json` declares the primary URL, and the skill verifies that URL responds. The **recovery path is intent-aware**: the skill auto-starts the host MCP only when nothing else in `.mcp.json` is up (a "cold start" signal that the user is opening a fresh work session and wants the skill to handle setup). It never auto-starts Docker, and it never auto-starts the host when a secondary backend is already up (that's a signal that the user explicitly wants to use the secondary).
+
+1. **HTTP endpoint reachable:** `curl -s -m 3 -o /dev/null -w "%{http_code}" {primary_url}`. Any response (even 4xx like 405) confirms the port is bound. If reachable, Layer A is green — skip the kind-detection and recovery steps below.
+
+2. **If unreachable, detect what kind of backend the primary is supposed to be:**
+   - Look at port `lsof` output: `lsof -iTCP:{primary_port} -sTCP:LISTEN -P -n`. If a process appears, log it (it's running but not responding healthily — surface the PID + command).
+   - Check `docker ps --filter "publish={primary_port}"`. If a container is bound to the port → backend kind is `container`.
+   - Otherwise check `$TB_ROOT/{mcp_compose_dir}/docker-compose.yml` — if its port mapping (`ports: - "127.0.0.1:{primary_port}:..."`) targets the primary port → backend kind is `container` (currently down).
+   - Else assume backend kind is `host` (a Node process is expected on this port; user runs it via a dev script).
+
+3. **Probe each secondary in `.mcp.json`** (any key other than `tradeblocks`): for each, `curl` its URL with the same 3-second timeout. Build a list of which secondaries are currently up. This drives the intent-aware decision in step 4.
+
+4. **Recovery — intent-aware:**
+
+   **Case A — primary is `host` AND no secondaries are up (cold start):** the user has just opened Claude with nothing running. This is the case where auto-start is welcome. Run `{host_mcp_start_cmd}` from config (default `~/Developer/run-dev-mcp.sh`) in the background. Wait 5s, re-probe the primary URL.
+   - If the primary now responds → log to recovery log, surface success.
+   - If still down → tail `/tmp/tradeblocks-mcp-dev.log` (or whatever log the script writes), surface to user, stop.
+   - **Always remind**: *"Auto-started the host MCP. **Quit and relaunch Claude Code** for the tools to mount in your session — Layer B (MCP client) only attaches at Claude Code session start."*
+
+   **Case B — primary is `host` AND at least one secondary IS up (intent signal):** the user already started something else (e.g. `cd .mcp && docker compose up -d` to test the published version). They have a reason — don't override their choice. Do **not** auto-start the host. Surface: *"Primary backend (host :{primary_port}) is down, but {secondary_key} ({secondary_kind} :{secondary_port}) is up. Two ways to proceed:*
+   > *1. **Use {secondary_key} as primary this session**: edit `.mcp.json` so `tradeblocks` → `{secondary_url}`, then quit and relaunch Claude Code. Bare `mcp__tradeblocks__*` calls will hit the secondary backend.*
+   > *2. **Start the host MCP and stay on it**: run `{host_mcp_start_cmd}`, then quit and relaunch Claude Code.*
+   >
+   > *Skill is not auto-recovering because a secondary is already running — that's usually an intent signal."*
+
+   **Case C — primary is `container` (Docker is the primary by `.mcp.json` configuration):** standard pulled-only setup. Surface: *"Primary Docker MCP at port {primary_port} is not running. Start with `cd $TB_ROOT/{mcp_compose_dir} && docker compose up -d` and quit + relaunch Claude Code."* If Docker daemon is also down, mention that fact (separate `docker info` probe). **Do NOT auto-start Docker** even when it IS the primary — auto-start has subtle race conditions with Layer B (Claude Code's MCP client only re-attempts at session start), so a clear instruction + Claude Code restart is better than silent recovery.
+
+5. **Compose file existence check** (only relevant when backend kind is `container`): if `$TB_ROOT/{mcp_compose_dir}/docker-compose.yml` is missing, this is a fresh install — tell the user: *"No MCP compose file found at `{path}`. See TradeBlocks MCP install docs: https://github.com/davidromeo/tradeblocks"*.
+
+6. **Container-specific tail** (when primary is a container that's running but unhealthy): `docker compose logs --tail=40` to surface error context.
+
+### Step 1.5 — Docker informational probe (always runs)
+
+Independent of whether Docker is the primary, **always probe Docker state and surface as informational**. The user wants to know "is the published version available?" without that gating session start.
+
+```python
+# Probe Docker daemon
+docker_daemon_up = subprocess.run(['docker','info'], capture_output=True).returncode == 0
+
+# If Docker daemon is up, look for the configured published container
+docker_container_status = None  # one of: "running", "stopped", "image-pulled-but-not-running", "image-not-pulled", "no-compose-file"
+docker_image_tag = None
+if docker_daemon_up:
+    cont = subprocess.run(
+        ['docker','ps','-a','--filter',f"name={config['mcp_container_name']}",'--format','{{.Status}}|{{.Image}}'],
+        capture_output=True, text=True).stdout.strip()
+    if cont:
+        status, image = cont.split("|", 1)
+        docker_container_status = "running" if status.startswith("Up") else "stopped"
+        docker_image_tag = image.rsplit(":", 1)[-1] if ":" in image else image
+    else:
+        # Container doesn't exist; check whether the image is pulled
+        img = subprocess.run(
+            ['docker','images','-q',f"tradeblocks-mcp:{config['mcp_image_tag']}"],
+            capture_output=True, text=True).stdout.strip()
+        docker_container_status = "image-pulled-but-not-running" if img else "image-not-pulled"
+```
+
+**Reporting (in main report, immediately after Layer A):**
+
+When the primary is the host process and Docker is just informational:
+```
+Published version (Docker): RUNNING — image 3.0.0-beta.2 (npm tracking beta · upstream-update available: 3.0.0-beta.3)
+                           NOT RUNNING — fine, start only when testing (image 3.0.0-beta.2 pulled · `cd .mcp && docker compose up -d`)
+                           NOT INSTALLED — image not pulled (`cd .mcp && docker compose pull`)
+                           DAEMON DOWN — Docker isn't running (informational; not required for daily work)
+```
+
+When the primary IS Docker (the conventional pulled-only setup), this informational block is redundant with Layer A — skip it.
+
+**npm upstream-update check** runs on the Docker image tag whenever it's available (running OR stopped, as long as the image is pulled). Tone of the suggestion depends on Docker's role:
+
+- **Docker IS the primary**: the existing wording — *"→ Run `/dev pipeline-update` to bump prod from {installed} to {available}."*
+- **Docker is informational/secondary**: softer wording — *"→ A newer published version is available ({available}). Consider updating before your next test (`docker compose pull` from `.mcp/`)."* The user isn't relying on Docker right now, so framing it as urgent is wrong.
 
 ### Layer B — Session mounting
 
@@ -154,22 +218,24 @@ Run these checks regardless of Layer A outcome — they reveal the state Claude 
 
 ### User prompt when tools not mounted
 
-If Layer B shows the MCP tools aren't attached to this session, emit this message **verbatim and prominently** (it's the only action that resolves it):
+If Layer B shows the MCP tools aren't attached to this session, emit this message **verbatim and prominently** (it's the only action that resolves it). The wording below adapts to the primary's backend kind — pick the right `Confirm` line:
 
-> ⚠ **MCP tools are not attached to this Claude Code session.** The container is running, but Claude Code bootstraps MCP servers only at session start and does not retry. To activate the tools:
-> 1. If `~/.claude/settings.json` does not include `"enabledMcpjsonServers": ["{server_key}"]`, add it now (prevents re-approval every session).
-> 2. Confirm Docker + `{mcp_container_name}` are up (they are now, thanks to recovery this session).
+> ⚠ **MCP tools are not attached to this Claude Code session.** The primary backend is reachable, but Claude Code bootstraps MCP servers only at session start and does not retry. To activate the tools:
+> 1. For each server entry approved this session, ensure `~/.claude/settings.json` includes `"enabledMcpjsonServers": ["{primary_key}", ...]` (prevents re-approval every session).
+> 2. Confirm the primary backend is up:
+>    - **host primary**: PID listening on `{primary_port}` (e.g. `lsof -iTCP:{primary_port} -sTCP:LISTEN`).
+>    - **container primary**: `{mcp_container_name}` shows `Up` in `docker ps`.
 > 3. **Quit and relaunch Claude Code** from `$TB_ROOT`. (This is a Claude Code app restart — *not* a computer restart and *not* a `/clear` or `/reset` within the existing session. The MCP client state only rebuilds on a fresh Claude Code process.) On the next session start both gates pass and tools mount automatically.
 >
-> **To avoid this next time:** start Docker (and wait for `{mcp_container_name}` to show `Up` with port `{port}` bound) *before* launching Claude Code. Then the startup skill is a pure verification pass.
+> **To avoid this next time:** make sure the primary backend is up *before* launching Claude Code. Then the startup skill is a pure verification pass.
 
 Offer to apply the `enabledMcpjsonServers` edit if it's missing — but **do not** attempt to relaunch Claude Code yourself (and never suggest a computer restart).
 
-**Report:** MCP image tag (from config), container status, HTTP probe result, `.mcp.json` presence, approval state, tool-call probe result, recovery actions taken. Be explicit about whether tools are mounted *in this session* — don't conflate container health with tool availability.
+**Report:** primary backend kind (host or container) + version identifier (image tag for container, `branch@sha` for host), HTTP probe result, `.mcp.json` presence, approval state, tool-call probe result, Docker informational state, recovery suggestions surfaced (no auto-execution). Be explicit about whether tools are mounted *in this session* — don't conflate backend health with tool availability.
 
-### Layer C — Multi-server inventory (added 2026-04-25)
+### Layer C — Multi-server inventory
 
-The user may have **multiple MCP servers** configured in `.mcp.json` — typically a baseline (prod npm-published, in Docker) plus one or more dev variants (host-process running from a fork). Layers A + B above probe ONE server (the baseline from config). This layer enumerates ALL configured servers and reports each.
+The user may have **multiple MCP servers** configured in `.mcp.json`. The bare `tradeblocks` key is the **primary** (the URL Layer A probed); other keys (e.g. `tradeblocks-published`, `tradeblocks-dev`) are **secondaries** — informational, may or may not be running. This layer enumerates ALL configured servers and labels each with its role.
 
 For each entry in `mcp_json["mcpServers"]`:
 
@@ -201,13 +267,14 @@ for key, cfg in mcp_json["mcpServers"].items():
         pid = re.search(r'^p(\d+)', proc, re.MULTILINE)
         if pid:
             kind = "host"
-            # If we know dev MCP source dir, read its package.json + git state
-            dev_repo = pathlib.Path.home() / "Developer/tradeblocks"
-            if dev_repo.exists():
-                pkg = json.loads((dev_repo / "packages/mcp-server/package.json").read_text())
+            # Read the host MCP source dir from config (default ~/Developer/tradeblocks)
+            host_repo = pathlib.Path(os.path.expanduser(
+                config.get('host_mcp_source_dir', '~/Developer/tradeblocks')))
+            if host_repo.exists():
+                pkg = json.loads((host_repo / "packages/mcp-server/package.json").read_text())
                 pkg_ver = pkg.get("version", "unknown")
-                sha = subprocess.check_output(['git','-C',str(dev_repo),'rev-parse','--short','HEAD']).decode().strip()
-                branch = subprocess.check_output(['git','-C',str(dev_repo),'rev-parse','--abbrev-ref','HEAD']).decode().strip()
+                sha = subprocess.check_output(['git','-C',str(host_repo),'rev-parse','--short','HEAD']).decode().strip()
+                branch = subprocess.check_output(['git','-C',str(host_repo),'rev-parse','--abbrev-ref','HEAD']).decode().strip()
                 version_str = f"{pkg_ver} (host: {branch}@{sha})"
             else:
                 version_str = "host process · source unknown"
@@ -223,49 +290,58 @@ for key, cfg in mcp_json["mcpServers"].items():
         capture_output=True, text=True).stdout.strip()
     healthy = code in ('405', '200')
 
-    # Designate baseline vs variant. The "baseline" is the prod container
-    # named in config (mcp_container_name). Anything else is a dev variant.
-    is_baseline = (kind == "container" and name == config.get('mcp_container_name'))
+    # Role detection: primary is whichever URL the bare `tradeblocks` key points at.
+    # Everything else is a secondary (informational, opt-in to start).
+    is_primary = (url == primary_url)
 
     servers_report.append({
         'key': key, 'kind': kind, 'version': version_str, 'healthy': healthy,
         'http_code': code, 'process_info': process_info, 'port': port,
-        'is_baseline': is_baseline,
+        'is_primary': is_primary,
     })
 ```
 
 **Report inline in the main report as `MCP servers:` with five columns:**
 
+Example A — host primary, Docker secondary (the default user setup):
 ```
 MCP servers:
-  Key                Kind        Version                                          Process                Status
-  tradeblocks        container   3.0.0-beta.2                                     container tradeblocks-mcp · Up 18h    :3100 · 405 · BASELINE
-  tradeblocks-dev    host        3.0.0-beta.2 (host: feat/tradeblocks-3.0@c602309) PID 32806              :3101 · 405 · dev variant
+  Key                    Kind        Version                                                    Process              Status
+  tradeblocks            host        3.0.0-beta.2 (host: fix/parquet-enrichment@d91a488)        PID 47994            :3101 · 405 · primary
+  tradeblocks-published  container   3.0.0-beta.2                                               container tradeblocks-mcp · Up 18h  :3100 · 405 · secondary (informational)
+```
+
+Example B — Docker primary, no secondaries (conventional pulled-only setup):
+```
+MCP servers:
+  Key                    Kind        Version                                                    Process              Status
+  tradeblocks            container   3.0.0-beta.2                                               container tradeblocks-mcp · Up 18h  :3100 · 405 · primary
+```
+
+Example C — both keys point at the same host backend (compatibility shape — same backend serves the bare and the dev/published namespace):
+```
+MCP servers:
+  Key                    Kind        Version                                                    Process              Status
+  tradeblocks            host        3.0.0-beta.2 (host: fix/parquet-enrichment@d91a488)        PID 47994            :3101 · 405 · primary
+  tradeblocks-dev        host        3.0.0-beta.2 (host: fix/parquet-enrichment@d91a488)        PID 47994            :3101 · 405 · secondary (same backend as primary)
 ```
 
 Column rules:
 - **Key**: server entry name in `.mcp.json`.
 - **Kind**: `container` (Docker), `host` (Node process on host), `missing` (configured but not running).
-- **Version**: for containers, the image tag (e.g. `3.0.0-beta.2`); for host processes, `<package.json version> (host: <branch>@<sha>)`. The git context makes "which fork/branch the dev MCP was built from" auditable.
+- **Version**: for containers, the image tag (e.g. `3.0.0-beta.2`); for host processes, `<package.json version> (host: <branch>@<sha>)`. The git context makes "which fork/branch the host MCP was built from" auditable.
 - **Process**: container name + `Up <time>` for containers; `PID <n>` for host; `NOT RUNNING` for missing.
-- **Status**: `<port> · <http_code> · BASELINE | dev variant`. `BASELINE` is loud-uppercase to signal "this is the user's prod"; `dev variant` is lowercase / quieter.
+- **Status**: `<port> · <http_code> · primary | secondary (informational) | secondary (same backend as primary)`. Lowercase throughout — the column is informational, not loud-prod-tagging. `primary` is the only status that gates session readiness; secondaries are reported but never block.
 
-**Baseline upstream-update check**: only for the BASELINE server, additionally compare the installed image tag against `npm registry tradeblocks-mcp` (latest + beta dist-tags) and report:
-- `tracking npm latest` if installed matches `dist-tags.latest` (and isn't a beta).
-- `tracking npm beta` if installed matches `dist-tags.beta`.
-- `outdated — npm latest is X.Y.Z, beta is A.B.C` if installed is older than both.
-- `npm has a newer version (X.Y.Z available)` if a newer one exists in the channel the user is on.
+**npm upstream-update check** runs on any **container** server in the inventory whose image is identifiable, regardless of role. The suggestion wording adapts to whether that container is the primary or a secondary (see Step 1.5). Specifically:
+- If the container is the **primary**: suggest `/dev pipeline-update` directly — the user's daily workflow depends on this image.
+- If the container is a **secondary** (informational): soften — "consider updating before next test." No pipeline-update CTA.
 
-If a newer version is available in the user's tracked channel, append a one-line suggestion:
-```
-→ Run `/dev pipeline-update` (or `dev-tradeblocks-pipeline-update`) to bump prod to <new_version>.
-```
+**Host servers do NOT get the npm-update flag** regardless of role. Their version is whatever the fork's source is; "outdated" is meaningless without knowing what the user intended.
 
-This is the cross-reference to the pipeline-update skill — the canonical path for updating prod versions.
+**Missing servers** (entry in `.mcp.json` but no process on the port): report as `NOT RUNNING` and suggest the recovery path. For host kinds (where source is typically `~/Developer/tradeblocks/`), suggest `~/Developer/run-dev-mcp.sh`. For container kinds, suggest `cd <TB_ROOT>/.mcp && docker compose up -d`. **For secondaries, frame the missing state as "fine — start only when needed"** rather than as a recovery target. For the primary, missing IS a recovery situation — Layer A already surfaced it.
 
-**Dev variants do NOT get the npm-update flag.** Their version is whatever the fork's source is; "outdated" is meaningless without knowing what the user intended.
-
-**Missing servers** (entry in `.mcp.json` but no process on the port): report as `NOT RUNNING` and suggest the recovery path. For dev variants whose source is `~/Developer/tradeblocks/`, suggest `~/Developer/run-dev-mcp.sh`. For the baseline, suggest `cd <TB_ROOT>/.mcp && docker compose up -d`.
+The full procedure for switching which key is the primary (e.g. flipping between host-primary and Docker-primary configurations) is documented in `user_development_guide.md` § "Choosing which MCP backend most tool calls hit".
 
 ---
 
@@ -742,14 +818,19 @@ Emit the report as **markdown with explicit section headers and blank lines betw
 ### Status
 
 ```
-[✓|✗] MCP Servers        {N} mounted ({P} prod · {D} dev) · baseline {image_tag} {tracking-channel} {· upstream-update-available}
-                          · session tools: <mounted|NOT mounted — QUIT & RELAUNCH CLAUDE CODE>
+[✓|✗] MCP Servers        primary: <kind> :{port} (<version-id>) · session tools: <mounted|NOT mounted — QUIT & RELAUNCH CLAUDE CODE>
+                         · published (Docker :3100): <RUNNING image {tag} | NOT RUNNING — fine, start when testing | NOT INSTALLED | DAEMON DOWN>
+                         {· optional npm-update line when an update is available, wording softens for secondary Docker}
 [✓|✗] Market Provider    {provider}  · <status> (<endpoint>)
 [✓|✗] Skills             <OK|DRIFT>  [· dev: N skills (K unpublished edits)]
 [✓|✗] Parquet            market: <date> (<current|stale>)  [· enrichment STALE|EMPTY]
 [✓|✗] DuckDB             analytics: OK  [· {N} active · {K} empty]
 [✓|✗] SqueezeMetrics     latest: <date>  · <current|stale — N trading days behind>     # omit row entirely if alex-data/.sync-meta.json doesn't exist
 ```
+
+The `primary` line shows the user's daily-driver backend. `<version-id>` is `branch@sha` for host kind, `image_tag` for container kind. The `published` line is **always emitted** when Docker is a secondary (informational); when Docker IS the primary, drop the `published` sub-line entirely (it'd be redundant with the primary line itself).
+
+Status `[✗]` for MCP Servers triggers only when the primary is unreachable OR session tools aren't mounted. A down secondary (e.g. Docker not running when it's just informational) is `[✓]` — secondaries don't gate readiness.
 
 ### Upstream vs Installed
 
@@ -763,19 +844,23 @@ tradeblocks-mcp            npm registry (tradeblocks-mcp)                   {ver
 ### MCP Servers
 
 ```
-Key                Kind        Version                                          Process                      Status
-tradeblocks        container   {image_tag}                                      container {name} · Up {time}  :{port} · {http} · BASELINE
-tradeblocks-dev    host        {pkg_ver} (host: {branch}@{sha})                 PID {pid}                     :{port} · {http} · dev variant
+Key                    Kind        Version                                          Process                      Status
+tradeblocks            host        {pkg_ver} (host: {branch}@{sha})                 PID {pid}                     :{port} · {http} · primary
+tradeblocks-published  container   {image_tag}                                      container {name} · Up {time}  :{port} · {http} · secondary (informational)
 ...
 ```
 
-When the baseline has an upstream update available, append a one-liner under the table:
+When a container row has an upstream npm update available, append a one-liner under the table — wording depends on role:
 
 ```
+# When the container is the PRIMARY:
 → Run `/dev pipeline-update` (or `dev-tradeblocks-pipeline-update`) to bump prod from {installed} to {available}.
+
+# When the container is a SECONDARY (informational):
+→ A newer published version is available ({available}). Consider updating before your next test (`docker compose pull` from `.mcp/`).
 ```
 
-(Section always emitted. Multi-server inventory is the single source of truth for "what MCPs are mounted, and which is prod.")
+(Section always emitted. Multi-server inventory is the single source of truth for "which MCPs are mounted, which is the primary, and which secondaries are available.")
 
 ### Dev Skills
 

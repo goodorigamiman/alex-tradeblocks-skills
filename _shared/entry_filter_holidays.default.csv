@@ -1,4 +1,40 @@
 Holiday_Name,Date,Type
+New Year's Day,2018-01-01,closed
+Martin Luther King Jr. Day,2018-01-15,closed
+Washington's Birthday,2018-02-19,closed
+Good Friday,2018-03-30,closed
+Memorial Day,2018-05-28,closed
+Independence Day Early Close,2018-07-03,early_close
+Independence Day,2018-07-04,closed
+Labor Day,2018-09-03,closed
+Thanksgiving Day,2018-11-22,closed
+Thanksgiving Day Early Close,2018-11-23,early_close
+George H.W. Bush Day of Mourning,2018-12-05,closed
+Christmas Eve Early Close,2018-12-24,early_close
+Christmas Day,2018-12-25,closed
+New Year's Day,2019-01-01,closed
+Martin Luther King Jr. Day,2019-01-21,closed
+Washington's Birthday,2019-02-18,closed
+Good Friday,2019-04-19,closed
+Memorial Day,2019-05-27,closed
+Independence Day Early Close,2019-07-03,early_close
+Independence Day,2019-07-04,closed
+Labor Day,2019-09-02,closed
+Thanksgiving Day,2019-11-28,closed
+Thanksgiving Day Early Close,2019-11-29,early_close
+Christmas Eve Early Close,2019-12-24,early_close
+Christmas Day,2019-12-25,closed
+New Year's Day,2020-01-01,closed
+Martin Luther King Jr. Day,2020-01-20,closed
+Washington's Birthday,2020-02-17,closed
+Good Friday,2020-04-10,closed
+Memorial Day,2020-05-25,closed
+Independence Day Observed,2020-07-03,closed
+Labor Day,2020-09-07,closed
+Thanksgiving Day,2020-11-26,closed
+Thanksgiving Day Early Close,2020-11-27,early_close
+Christmas Eve Early Close,2020-12-24,early_close
+Christmas Day,2020-12-25,closed
 New Year's Day,2021-01-01,closed
 Martin Luther King Jr. Day,2021-01-18,closed
 Washington's Birthday,2021-02-15,closed

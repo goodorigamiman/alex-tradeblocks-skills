@@ -6,7 +6,7 @@ compatibility: >
   Reads `mcp__tradeblocks-dev__*` tools (deferred — use ToolSearch to load schemas before calling).
   Optional config at `<TB_ROOT>/alex_dev_router_config.md` for friendly aliases.
   Requires Python 3 + difflib (stdlib) for fuzzy matching.
-  PUBLISHING NOTE — this skill follows the standard `dev-` folder prefix convention (folder `dev-dev-router` → published `alex-dev-router`), but the frontmatter `name` field is just `dev` so the slash command is `/dev`.
+  PUBLISHING NOTE — this skill follows the standard `dev-` folder prefix convention (folder `alex-dev-router` → published `alex-dev-router`), but the frontmatter `name` field is just `dev` so the slash command is `/dev`.
   The dev-github-update transform "replace `dev-` with `alex-` in the name field" is a substring replace; since `dev` (the literal value) does not contain the `dev-` substring, the transform is a no-op for this skill and the `name` field set to `dev` survives unchanged through publishing.
   No exception needed — the existing transform handles this naturally.
   ENVIRONMENT NOTE — this skill assumes a maintainer-side environment with a dev folder. On a pulled-only install (no dev folder), the skill reports "no dev environment detected" rather than silently routing to prod.

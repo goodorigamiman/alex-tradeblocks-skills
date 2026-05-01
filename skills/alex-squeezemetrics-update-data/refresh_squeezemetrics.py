@@ -66,7 +66,7 @@ PARQUET_PATH = TB_ROOT / "alex-data" / "squeezemetrics" / "data.parquet"
 SYNC_META_PATH = TB_ROOT / "alex-data" / ".sync-meta.json"
 
 SOURCE_URL = "https://squeezemetrics.com/monitor/static/DIX.csv"
-USER_AGENT = "Mozilla/5.0 (compatible; TradeBlocks-dev-squeezemetrics-update-data)"
+USER_AGENT = "Mozilla/5.0 (compatible; TradeBlocks-alex-squeezemetrics-update-data)"
 
 
 # ── Atomic write helpers ──────────────────────────────────────────────────────
