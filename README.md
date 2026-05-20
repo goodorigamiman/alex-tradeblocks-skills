@@ -40,13 +40,12 @@ No cross-plugin dependencies — every skill is self-contained.
 
 <!-- SKILLS-TABLE:BEGIN (auto-managed by the github publish workflow — do not edit between markers; edit dev SKILL.md descriptions instead) -->
 
-12 skills organized into three groups.
+11 skills organized into three groups.
 
 ### Startup & tooling
 
 | Skill | Purpose |
 |---|---|
-| `alex-tradeblocks-startup` | Health check at session start (TradeBlocks 3.0 / Parquet-mode aware): MCP server inventory (baseline + dev variants), market provider, plugin drift, DuckDB liveness, Parquet market data freshness, enrichment coverage, optional SqueezeMetrics freshness. Auto-recovers when possible. **Run this first in every session.** |
 | `alex-dev-router` | Slash-invoked router (`/dev <thing>`) for dev resources. Auto-discovers from the configured dev folder and `mcp__tradeblocks-dev__*` tools, fuzzy-matches user requests, asks for confirmation when ambiguous, and executes the dev variant deterministically. Maintainer-side; on a pulled-only install reports "no dev environment detected" rather than silently falling through to prod. |
 | `alex-normalize-statistics` | Wraps `get_statistics` and renormalizes P&L + margin to per-contract terms; flags wide margin ranges that distort return-on-margin reporting. |
 | `alex-squeezemetrics-update-data` | Refreshes SqueezeMetrics DIX/GEX daily data from upstream. Maintains canonical CSV under `_shared/`, mirrors to Parquet under `alex-data/squeezemetrics/`, updates `.sync-meta.json` watermark. Idempotent + atomic. Trigger: *"update squeezemetrics data"*. |
@@ -113,44 +112,6 @@ The first time you analyze a block, the shared default groups CSV is copied into
 ### 5. Strict provenance
 
 Every report names its sources explicitly (data CSV, groups CSV, holidays CSV, output CSV) with `[block-local]` / `[shared]` / `[explicit]` tags so you can always trace any number back to the file that produced it.
-
----
-
-## How `alex-tradeblocks-startup` works (in detail)
-
-### First-run setup
-
-The first time you run the startup skill, it probes your environment (TB root, dev workspace existence, `.env` provider, `.mcp` compose file, plugin marketplaces) and writes `alex_tradeblocks_startup_config.md`. It asks you to confirm each detected value before writing.
-
-Expect questions like:
-- *"I found `ThetaData` in your `.env`. What command starts it?"*
-- *"I detected a dev workspace folder — is this your local maintainer workspace?"* (Pulled-only users answer no and get a simpler report.)
-
-After first run, subsequent runs read the config silently and skip the interactive setup.
-
-### What each run checks
-
-Every run walks through five layers and stops at the first unrecoverable failure:
-
-1. **Environment pre-flight** — python3, PyYAML, duckdb, gh, curl, git installed?
-2. **MCP server** — Layer A (Docker daemon + container + port bound) and Layer B (MCP tools actually mounted in *this* Claude session)
-3. **Market data provider** — endpoint reachable; auto-start daemon if configured
-4. **Plugin drift** — upstream GitHub HEAD vs marketplace clone vs runtime cache (three-way check, not the stale `gitCommitSha` bookkeeping field)
-5. **DuckDB state** — liveness probe, table inventory, market data freshness, enrichment coverage
-
-The final report is one compact block: status summary, `Upstream vs Installed:` table, `Market data coverage:` table, recovery actions taken, config path.
-
-### Managing your config + log files
-
-**When to hand-edit the config:**
-- Your market-provider start command changes
-- You move the MCP compose directory or upgrade the container image
-- You add/remove a plugin marketplace
-- You want to add a known-deprecated table to `legacy_tables_ignore`
-
-**To reset:** rename or delete `alex_tradeblocks_startup_config.md`. On the next run, first-run setup kicks in again.
-
-**The recovery log** (`alex_tradeblocks_startup_log.md`) is append-only and useful for spotting patterns ("Docker is always down at session start — set it to launch on login"). Trim or archive manually if it grows large.
 
 ---
 

@@ -42,7 +42,7 @@ The skill name is intentionally `dev` (not `alex-dev-router` or `alex-dev`) so t
    - Inspecting available tools for `mcp__tradeblocks-dev__*` for dev MCP tool names.
    This means new dev skills appear in the router automatically, no config maintenance.
 
-5. **Optional config = friendly aliases only.** If `<TB_ROOT>/alex_dev_router_config.md` exists, it adds short aliases (e.g. `startup` → `alex-tradeblocks-startup`) on top of the auto-discovered list. The router works without the config, but the config makes natural phrasing more reliable.
+5. **Optional config = friendly aliases only.** If `<TB_ROOT>/alex_dev_router_config.md` exists, it adds short aliases (e.g. `startup` → `dev-tradeblocks-startup`) on top of the auto-discovered list. The router works without the config, but the config makes natural phrasing more reliable.
 
 ---
 
@@ -52,7 +52,7 @@ The user's message after the slash command is free-form. Examples to handle:
 
 | User says | Parsed alias | Likely target |
 |---|---|---|
-| `/dev startup` | `startup` | dev skill `alex-tradeblocks-startup` |
+| `/dev startup` | `startup` | dev skill `dev-tradeblocks-startup` |
 | `/dev list blocks` | `list blocks` | dev MCP tool `list_blocks` |
 | `/dev list-blocks` | `list blocks` | dev MCP tool `list_blocks` (hyphen normalized to space) |
 | `/dev enrich VIX` | `enrich` (head) + `VIX` (args) | dev MCP tool `enrich_market_data(ticker="VIX")` |
@@ -153,7 +153,7 @@ if config_path.exists():
 candidates = {}
 for name in dev_skill_names:
     candidates[name] = ("skill", name)
-    # Also the "stripped" form: alex-tradeblocks-startup -> tradeblocks startup
+    # Also the "stripped" form: dev-tradeblocks-startup -> tradeblocks startup
     stripped = name.removeprefix("dev-").replace("-", " ")
     candidates.setdefault(stripped, ("skill", name))
     # Last word as a shortcut
@@ -297,10 +297,10 @@ This makes it visible-in-transcript that the dev path was used. Useful when revi
 
 ```
 User: /dev startup
-Router: matched "startup" → skill "alex-tradeblocks-startup" (score 1.00)
-        Reading <dev-folder>/alex-tradeblocks-startup/SKILL.md ...
+Router: matched "startup" → skill "dev-tradeblocks-startup" (score 1.00)
+        Reading <dev-folder>/dev-tradeblocks-startup/SKILL.md ...
         [executes the dev startup skill]
-        (routed via /dev → skill alex-tradeblocks-startup)
+        (routed via /dev → skill dev-tradeblocks-startup)
 ```
 
 **Example 2 — typo, mid-confidence:**
@@ -350,13 +350,13 @@ When the auto-discovered names are awkward to type, drop a config at `<TB_ROOT>/
 
 ```yaml
 aliases:
-  startup:        alex-tradeblocks-startup
+  startup:        dev-tradeblocks-startup
   heatmap:        alex-entry-filter-heatmap
   list-blocks:    list_blocks
   enrich:         enrich_market_data
 ```
 
-The router merges these into the candidate list, so `startup` (very natural) routes the same as `alex-tradeblocks-startup` (verbose) or `tradeblocks startup` (auto-stripped). Aliases trump auto-discovered keys when they collide.
+The router merges these into the candidate list, so `startup` (very natural) routes the same as `dev-tradeblocks-startup` (verbose) or `tradeblocks startup` (auto-stripped). Aliases trump auto-discovered keys when they collide.
 
 This file is **optional** and **not parsed strictly**: missing keys, extra keys, smartypants quotes — all tolerated. The router falls back to auto-discovery when the config is absent or malformed.
 
@@ -388,7 +388,7 @@ This means `dev-github-update` can publish `alex-dev-router` without modificatio
 
 - **Not a wrapper around prod.** This skill never touches `mcp__tradeblocks__*` or any cache skill. If the user wants prod, they don't invoke this skill.
 - **Not an automation.** It's a router — it picks WHICH dev resource runs and runs it. The routed resource still does its own work (asks confirmations, writes files, etc.) per its own SKILL.md.
-- **Not a replacement for the dev startup ritual.** `/dev startup` will route to `alex-tradeblocks-startup`, but the dev environment must already be healthy. Use the startup skill to verify, not assume.
+- **Not a replacement for the dev startup ritual.** `/dev startup` will route to `dev-tradeblocks-startup`, but the dev environment must already be healthy. Use the startup skill to verify, not assume.
 - **Not a multi-step orchestrator.** One slash invocation = one routed call. Use `dev-tradeblocks-pipeline-update` or other skills for orchestration.
 
 ---
