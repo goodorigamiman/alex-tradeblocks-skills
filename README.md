@@ -40,7 +40,7 @@ No cross-plugin dependencies — every skill is self-contained.
 
 <!-- SKILLS-TABLE:BEGIN (auto-managed by the github publish workflow — do not edit between markers; edit dev SKILL.md descriptions instead) -->
 
-11 skills organized into three groups.
+10 skills organized into three groups.
 
 ### Startup & tooling
 
@@ -48,7 +48,6 @@ No cross-plugin dependencies — every skill is self-contained.
 |---|---|
 | `alex-dev-router` | Slash-invoked router (`/dev <thing>`) for dev resources. Auto-discovers from the configured dev folder and `mcp__tradeblocks-dev__*` tools, fuzzy-matches user requests, asks for confirmation when ambiguous, and executes the dev variant deterministically. Maintainer-side; on a pulled-only install reports "no dev environment detected" rather than silently falling through to prod. |
 | `alex-normalize-statistics` | Wraps `get_statistics` and renormalizes P&L + margin to per-contract terms; flags wide margin ranges that distort return-on-margin reporting. |
-| `alex-squeezemetrics-update-data` | Refreshes SqueezeMetrics DIX/GEX daily data from upstream. Maintains canonical CSV under `_shared/`, mirrors to Parquet under `alex-data/squeezemetrics/`, updates `.sync-meta.json` watermark. Idempotent + atomic. Trigger: *"update squeezemetrics data"*. |
 
 ### Entry filter analysis
 
