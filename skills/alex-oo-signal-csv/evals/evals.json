@@ -1,0 +1,60 @@
+{
+  "skill_name": "dev-oo-signal-csv",
+  "evals": [
+    {
+      "id": 0,
+      "name": "multi-leg-fly-from-chat-option-4",
+      "prompt": "Create an OO custom signals CSV for this trade — SPX call butterfly, opened Friday Oct 10 2025 at 9:32 AM, closed same day at 3:59 PM. Legs (all expire Oct 31 2025): BTO 1 6815 C @ 48.25, STO 2 6855 C @ 43.70, BTO 1 6895 C @ 20.85.",
+      "files": [],
+      "assertions": [
+        {"text": "signal.csv exists somewhere under outputs/ (under an _all/ subfolder per the skill's convention)"},
+        {"text": "Header row is exactly 'OPEN_DATETIME,CLOSE_DATETIME,BUY_SELL,CALL_PUT,STRIKE,EXPIRATION,QUANTITY' — no quoting, no surrounding whitespace"},
+        {"text": "CSV has exactly 3 data rows (one per leg) plus 1 header row"},
+        {"text": "Every row has OPEN_DATETIME = '2025-10-10 09:32' (24-hour, no seconds, no AM/PM, no quoting)"},
+        {"text": "Every row has CLOSE_DATETIME = '2025-10-10 15:59'"},
+        {"text": "Every row has EXPIRATION = '2025-10-31'"},
+        {"text": "Every row has CALL_PUT = 'C'"},
+        {"text": "BUY_SELL column contains exactly the values B, S, B (in any leg order)"},
+        {"text": "STRIKE column contains exactly the values 6815, 6855, 6895 (no trailing zeros like 6815.0)"},
+        {"text": "QUANTITY column contains the values 1, 2, 1 corresponding to strikes 6815, 6855, 6895 respectively"},
+        {"text": "No data value or header is wrapped in double quotes"},
+        {"text": "A README.md exists in the same folder as signal.csv documenting source/methodology/format option"},
+        {"text": "No by-block/ subdirectory was created (the signal is not tied to a TB block)"}
+      ]
+    },
+    {
+      "id": 1,
+      "name": "entry-times-from-block-exits-option-1",
+      "prompt": "Build an OO signal CSV that opens trades at the same minute that block '20260319 - Sam Port' closed its trades between 2026-03-02 and 2026-03-13. Just entry times, no exits or strikes — I'll configure the strategy in OO's UI.",
+      "files": [],
+      "assertions": [
+        {"text": "signal.csv exists somewhere under outputs/ (under an _all/ subfolder per the skill's convention)"},
+        {"text": "Header row is exactly 'OPEN_DATETIME' (single column, no quoting, no extras)"},
+        {"text": "CSV has at least one data row (Sam Port block has trades in the requested window)"},
+        {"text": "Every OPEN_DATETIME value matches the regex ^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}$ (24-hour HH:MM, no seconds)"},
+        {"text": "Every date in OPEN_DATETIME falls within the window 2026-03-02 to 2026-03-13 inclusive"},
+        {"text": "No data value or header is wrapped in double quotes"},
+        {"text": "A README.md exists in the same folder as signal.csv"},
+        {"text": "A mirrored copy of the signal directory exists under outputs/by-block/20260319 - Sam Port/ (this signal IS block-tied)"},
+        {"text": "The signal.csv content in _all/ and by-block/ is byte-identical"}
+      ]
+    },
+    {
+      "id": 2,
+      "name": "entries-with-strikes-from-datelist-option-3",
+      "prompt": "I have a datelist CSV at /tmp/test-datelist.csv with one date per line. Generate an OO signal where each entry opens at 09:35 ET at strike 6500. I'm setting up the rest of the structure in OO.",
+      "files": ["test-datelist.csv"],
+      "assertions": [
+        {"text": "signal.csv exists somewhere under outputs/ (under an _all/ subfolder per the skill's convention)"},
+        {"text": "Header row is exactly 'OPEN_DATETIME,STRIKE' (Option 3 — two columns, in this order, no quoting)"},
+        {"text": "CSV has exactly 8 data rows (matching the 8 dates in the input datelist)"},
+        {"text": "Every OPEN_DATETIME value ends with ' 09:35' (24-hour, no seconds)"},
+        {"text": "Every row has STRIKE = 6500 (no trailing zero like 6500.0)"},
+        {"text": "The 8 dates in OPEN_DATETIME match exactly the 8 dates in /tmp/test-datelist.csv (2026-01-05, 2026-01-12, 2026-01-19, 2026-01-26, 2026-02-02, 2026-02-09, 2026-02-16, 2026-02-23)"},
+        {"text": "No data value or header is wrapped in double quotes"},
+        {"text": "A README.md exists in the same folder as signal.csv"},
+        {"text": "No by-block/ subdirectory was created (the signal is not tied to a TB block)"}
+      ]
+    }
+  ]
+}

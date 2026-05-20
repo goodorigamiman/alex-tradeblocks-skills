@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-alex-entry-filter-build-data — build entry_filter_data.csv for a block.
+dev-entry-filter-build-data — build entry_filter_data.csv for a block.
 
 Reads the filter groups CSV to decide which columns to build, pulls trade +
 market data via read-only DuckDB, computes per-trade 1-lot economics, populates
@@ -162,13 +162,56 @@ def parse_tb_table(tb_table: str) -> tuple[str, str | None]:
     return (m.group(1).strip(), (m.group(2) or "").strip() or None)
 
 
+def parse_location(location: str) -> tuple[str, str | None]:
+    """Parse the Location column into (kind, target) per the v2.0 convention.
+
+    Examples:
+      "parquet market.spot_daily"           -> ("parquet", "market.spot_daily")
+      "parquet market.enriched_context"     -> ("parquet", "market.enriched_context")
+      "parquet market.spot"                 -> ("parquet", "market.spot")
+      "parquet market.enriched"             -> ("parquet", "market.enriched")
+      "duck.db analytics.trades.trade_data" -> ("duck.db", "analytics.trades.trade_data")
+      "entry_filter_dates_calendar.default.csv" -> ("csv", "entry_filter_dates_calendar.default.csv")
+      "" / NaN                              -> ("", None)
+    """
+    if not location or pd.isna(location):
+        return ("", None)
+    s = str(location).strip()
+    if not s:
+        return ("", None)
+    if s.startswith("parquet "):
+        return ("parquet", s[len("parquet "):].strip())
+    if s.startswith("duck.db "):
+        return ("duck.db", s[len("duck.db "):].strip())
+    if s.endswith(".csv"):
+        return ("csv", s)
+    return ("", s)  # unknown format — treat as opaque
+
+
 def load_groups(path: pathlib.Path) -> pd.DataFrame:
     df = pd.read_csv(path, encoding="utf-8-sig")
     df["TB Filter"] = df["TB Filter"].astype(str).str.upper() == "TRUE"
     df["CSV Column"] = df["CSV Column"].fillna("").astype(str).str.strip()
-    df["active"] = df["TB Filter"] & (df["CSV Column"] != "")
     df["_lag"] = df["TB Notes"].apply(classify_lag)
     df[["_tb_schema", "_tb_ticker"]] = df["TB Table"].apply(lambda v: pd.Series(parse_tb_table(v)))
+
+    # v2.0: parse Location column. The new dispatch logic uses Location to decide
+    # where to read each filter from. Location supports three kinds: parquet
+    # (existing TB Table behavior), duck.db (existing trades.trade_data behavior),
+    # and csv (NEW — read from a datelist file in _shared/, join on date).
+    if "Location" in df.columns:
+        df[["_loc_kind", "_loc_target"]] = df["Location"].apply(lambda v: pd.Series(parse_location(v)))
+    else:
+        df["_loc_kind"] = ""
+        df["_loc_target"] = None
+
+    # v2.0: a row is active if it has a non-blank CSV Column AND any source we
+    # can resolve (TB Filter=TRUE for parquet/duckdb, OR Location is a CSV file).
+    # Pre-v2.0 logic was just `TB Filter & (CSV Column != "")` which excluded
+    # all CSV-sourced rows because TB Filter is FALSE on rows where TB doesn't
+    # have a native equivalent.
+    has_source = df["TB Filter"] | (df["_loc_kind"] == "csv")
+    df["active"] = has_source & (df["CSV Column"] != "")
     return df
 
 
@@ -827,6 +870,65 @@ def fetch_ticker_fields(con, block_id: str, ticker: str,
     return con.execute(sql, params).df(), {}
 
 
+def fetch_sma_pct_fields(con, block_id: str, ticker: str, periods: list[int]) -> pd.DataFrame:
+    """Compute Price_vs_SMA<N>_Pct on-the-fly from market.spot_daily for periods
+    that aren't pre-enriched in market.enriched.
+
+    Background: market.enriched currently only carries Price_vs_SMA50_Pct (and
+    Price_vs_EMA21_Pct). The groups CSV references SMA 5/10/20/200 too, but
+    those columns simply aren't in the enriched parquet. This helper plugs the
+    gap by computing them inline.
+
+    Convention (matches TB's Price_vs_SMA50_Pct semantics):
+    - SMA computed from prior-day close (lookback window strictly before the
+      current day, [N preceding ... 1 preceding]).
+    - Percent deviation = (today_open - sma_lag) / sma_lag * 100.
+
+    Returns DataFrame with date_opened + one column per period (`Price_vs_SMA<N>_Pct`).
+    Empty frame if `periods` is empty or query fails.
+    """
+    if not periods:
+        return pd.DataFrame()
+
+    # Build window-frame SMA expressions (one per period).
+    # ROWS BETWEEN N PRECEDING AND 1 PRECEDING produces a strict-prior lag.
+    sma_exprs = ", ".join(
+        f"AVG(close) OVER (PARTITION BY ticker ORDER BY d ROWS BETWEEN {n} PRECEDING AND 1 PRECEDING) AS sma_{n}"
+        for n in periods
+    )
+    pct_exprs = ", ".join(
+        f"(s.open - s.sma_{n}) / NULLIF(s.sma_{n}, 0) * 100 AS Price_vs_SMA{n}_Pct"
+        for n in periods
+    )
+
+    # NOTE on date type: market_spot_daily.date is a DATE in DuckDB; trades.trade_data.date_opened
+    # is also a DATE. Cast both to DATE for safety (parquet sometimes returns timestamp).
+    sql = f"""
+    WITH spot AS (
+        SELECT ticker, CAST(date AS DATE) AS d, open, close
+        FROM market_spot_daily
+        WHERE ticker = ?
+    ),
+    sma AS (
+        SELECT ticker, d, open, close, {sma_exprs}
+        FROM spot
+    ),
+    block_dates AS (
+        SELECT DISTINCT CAST(date_opened AS DATE) AS date_opened
+        FROM trades.trade_data
+        WHERE block_id = ?
+    )
+    SELECT bd.date_opened, {pct_exprs}
+    FROM block_dates bd
+    LEFT JOIN sma s ON s.d = bd.date_opened AND s.ticker = ?
+    """
+
+    try:
+        return con.execute(sql, [ticker, block_id, ticker]).df()
+    except Exception:
+        return pd.DataFrame()
+
+
 def fetch_context_fields(con, block_id: str, fields: list[str]) -> pd.DataFrame:
     if not fields:
         return pd.DataFrame()
@@ -857,30 +959,125 @@ def resolve_ticker(tb_ticker: str | None, underlying: str) -> str | None:
     return tb_ticker.strip()
 
 
-def build_filter_columns(con, block_id: str, underlying: str, groups: pd.DataFrame, skipped: dict) -> pd.DataFrame:
-    """Returns a DataFrame keyed by date_opened with every requested filter column."""
+def fetch_csv_datelist_columns(shared_dir: pathlib.Path, csv_filename: str,
+                                csv_cols: list[str]) -> tuple[pd.DataFrame, str | None]:
+    """Read a datelist CSV from _shared/ and return rows with the requested columns.
+
+    Per the v2.0 architecture, each datelist file (`entry_filter_dates_*.default.csv`)
+    has a `date` column as PK plus pre-computed feature columns. This function:
+
+    1. Resolves the file in _shared/ (with `.csv` user-override falling back to
+       `.default.csv`, matching the convention used elsewhere).
+    2. Reads it via pandas.
+    3. Selects `date` + requested columns.
+    4. Normalizes the date type to python `datetime.date` for merge compatibility.
+    5. Dedupes by date (event-indexed files like econ_calendar have multiple rows
+       per date with identical date-level proximity values; first-row-wins).
+    6. Renames `date` -> `date_opened` for the downstream merge.
+
+    Returns (frame, error_message). On error, returns (empty_frame, message).
+    """
+    # Resolve override -> default
+    if csv_filename.endswith(".default.csv"):
+        override = shared_dir / csv_filename.replace(".default.csv", ".csv")
+        if override.exists():
+            path = override
+        else:
+            path = shared_dir / csv_filename
+    else:
+        path = shared_dir / csv_filename
+
+    if not path.exists():
+        return pd.DataFrame(), f"datelist file not found: {csv_filename}"
+
+    try:
+        df = pd.read_csv(path, encoding="utf-8-sig")
+    except Exception as e:
+        return pd.DataFrame(), f"failed to read datelist: {str(e).split(chr(10))[0][:120]}"
+
+    # Find the date column case-insensitively (econ_calendar uses 'Date',
+    # other datelist files use 'date' — both are valid).
+    date_col = next((c for c in df.columns if c.lower() == "date"), None)
+    if date_col is None:
+        return pd.DataFrame(), f"datelist missing 'date'/'Date' column: {csv_filename}"
+
+    # Verify each requested col exists; remove missing ones from the request and
+    # report them so the caller can mark them skipped per-column.
+    available = set(df.columns)
+    missing = [c for c in csv_cols if c not in available]
+    valid = [c for c in csv_cols if c in available]
+    if not valid:
+        return pd.DataFrame(), f"none of the requested columns present in {csv_filename}: missing={missing}"
+
+    sub = df[[date_col] + valid].copy()
+    if date_col != "date":
+        sub = sub.rename(columns={date_col: "date"})
+    # Normalize date type to datetime64[us] to match DuckDB's parquet output —
+    # the merge in build_filter_columns requires consistent dtype across all
+    # frames being joined on date_opened.
+    sub["date"] = pd.to_datetime(sub["date"], errors="coerce").astype("datetime64[us]")
+    sub = sub.dropna(subset=["date"]).drop_duplicates(subset=["date"], keep="first")
+    sub = sub.rename(columns={"date": "date_opened"})
+
+    # If some requested cols were missing, attach an attribute the caller can use
+    sub.attrs["_missing_cols"] = missing
+    return sub, None
+
+
+def build_filter_columns(con, block_id: str, underlying: str, groups: pd.DataFrame,
+                         skipped: dict, shared_dir: pathlib.Path) -> pd.DataFrame:
+    """Returns a DataFrame keyed by date_opened with every requested filter column.
+
+    Dispatch order (v2.0):
+    - Location starts "parquet "  -> parquet/duckdb query path (existing TB Table dispatch)
+    - Location starts "duck.db "  -> trade-level (handled by base frame, skip here)
+    - Location ends ".csv"        -> NEW: datelist CSV join via fetch_csv_datelist_columns
+    - Otherwise                   -> fall through to legacy TB Table dispatch
+
+    Legacy fallback handles rows that haven't been migrated to use the Location
+    column yet.
+    """
     merged = pd.DataFrame()
     # Bucket active rows by (schema, ticker, lag)
     buckets: dict = defaultdict(list)  # (schema, ticker, lag) -> list of (csv_col, tb_field)
+    csv_buckets: dict = defaultdict(list)  # csv_filename -> [csv_col, ...]
+    sma_periods_needed: dict = {}  # period (int) -> csv_col (str). For SMA cols not in market.enriched.
     deferred_computed = []  # rows needing post-hoc computation
+
+    # Detect which Price_vs_SMA<N>_Pct columns the source enriched view actually has.
+    # SMA periods present in enriched go through the normal market.daily path;
+    # missing ones get computed on-the-fly via fetch_sma_pct_fields.
+    enriched_cols = market_daily_columns(con)
+    sma_col_re = re.compile(r"^Price_vs_SMA(\d+)_Pct$")
 
     for _, r in groups[groups["active"]].iterrows():
         csv_col = r["CSV Column"]
+        loc_kind = r.get("_loc_kind", "")
+        loc_target = r.get("_loc_target")
         schema = r["_tb_schema"]
         ticker = resolve_ticker(r["_tb_ticker"], underlying)
         lag = r["_lag"]
         tb_field = str(r["TB Field"]).strip() if not pd.isna(r["TB Field"]) else ""
 
+        # ── v2.0 CSV-source dispatch (datelist files in _shared/) ────────────
+        if loc_kind == "csv" and loc_target:
+            csv_buckets[loc_target].append(csv_col)
+            continue
+
+        # ── duck.db (trades.trade_data) — handled against base frame ──────────
+        if loc_kind == "duck.db":
+            continue
+        # Legacy schema check for the same case
+        if schema == "trades.trade_data":
+            continue
+
+        # ── parquet / legacy TB Table dispatch ────────────────────────────────
         # Schema comparisons match the user-facing TB Table values in the
         # groups CSV (legacy names: market.daily / market._context_derived /
         # market.intraday). These are translated to 3.0 view names when SQL
         # is built — see connect_readonly() for the view registrations.
         if schema.startswith("market.intraday"):
             skipped[csv_col] = "intraday source not supported by this skill"
-            continue
-
-        if schema == "trades.trade_data":
-            # Handled against the base frame (see finalization)
             continue
 
         if r["_tb_ticker"] and "/" in r["_tb_ticker"]:
@@ -896,6 +1093,16 @@ def build_filter_columns(con, block_id: str, underlying: str, groups: pd.DataFra
             if not ticker:
                 skipped[csv_col] = f"unresolvable ticker from TB Table '{r['TB Table']}'"
                 continue
+
+            # Special case: Price_vs_SMA<N>_Pct columns that aren't in market.enriched
+            # (currently only SMA50 is enriched). Compute these inline from
+            # market.spot_daily instead of failing.
+            sma_match = sma_col_re.match(tb_field)
+            if sma_match and tb_field not in enriched_cols:
+                period = int(sma_match.group(1))
+                sma_periods_needed[period] = csv_col
+                continue
+
             db_col = resolve_db_field(con, csv_col, tb_field, ticker)
             if not db_col:
                 skipped[csv_col] = f"no DB column resolvable for ticker={ticker} (tried csv_col, TB Field='{tb_field}', ticker-strip)"
@@ -903,9 +1110,11 @@ def build_filter_columns(con, block_id: str, underlying: str, groups: pd.DataFra
             buckets[("market_daily", ticker, lag)].append((csv_col, db_col))
             continue
 
-        skipped[csv_col] = f"unknown TB Table '{r['TB Table']}'"
+        # Nothing matched — surface a meaningful skip reason
+        loc_str = r.get("Location", "") or "(blank)"
+        skipped[csv_col] = f"unknown source — Location='{loc_str}', TB Table='{r['TB Table']}'"
 
-    # Execute bucket queries
+    # Execute parquet/context bucket queries (existing logic)
     for (kind, ticker, lag), entries in buckets.items():
         try:
             if kind == "context":
@@ -934,6 +1143,44 @@ def build_filter_columns(con, block_id: str, underlying: str, groups: pd.DataFra
             merged = raw
         else:
             merged = merged.merge(raw, on="date_opened", how="outer")
+
+    # ── Compute SMA periods missing from market.enriched ──────────────────────
+    if sma_periods_needed:
+        periods_list = sorted(sma_periods_needed.keys())
+        sma_df = fetch_sma_pct_fields(con, block_id, underlying, periods_list)
+        if sma_df.empty:
+            for period, csv_col in sma_periods_needed.items():
+                skipped[csv_col] = f"on-the-fly SMA{period} computation failed"
+        else:
+            # Rename Price_vs_SMA<N>_Pct columns to the requested CSV Column names
+            # (typically the same: SMA_5 -> Price_vs_SMA5_Pct, but the groups CSV
+            # uses CSV Column = "SMA_5" while the SQL produces "Price_vs_SMA5_Pct").
+            for period, csv_col in sma_periods_needed.items():
+                sql_col = f"Price_vs_SMA{period}_Pct"
+                if sql_col in sma_df.columns and csv_col != sql_col:
+                    sma_df = sma_df.rename(columns={sql_col: csv_col})
+            # Normalize date type for merge (matches CSV path treatment).
+            sma_df["date_opened"] = pd.to_datetime(sma_df["date_opened"], errors="coerce").astype("datetime64[us]")
+            sma_df = sma_df.dropna(subset=["date_opened"]).drop_duplicates(subset=["date_opened"], keep="first")
+            if merged.empty:
+                merged = sma_df
+            else:
+                merged = merged.merge(sma_df, on="date_opened", how="outer")
+
+    # ── v2.0: Execute CSV datelist joins ──────────────────────────────────────
+    for csv_filename, csv_cols in csv_buckets.items():
+        sub, err = fetch_csv_datelist_columns(shared_dir, csv_filename, csv_cols)
+        if err is not None:
+            for c in csv_cols:
+                skipped[c] = err
+            continue
+        # Mark per-column missing (when the file existed but some requested cols weren't there)
+        for c in sub.attrs.get("_missing_cols", []):
+            skipped[c] = f"column not present in {csv_filename}"
+        if merged.empty:
+            merged = sub
+        else:
+            merged = merged.merge(sub, on="date_opened", how="outer")
 
     return merged, deferred_computed
 
@@ -1155,7 +1402,7 @@ def main() -> int:
 
         # Filter frame
         skipped: dict[str, str] = {}
-        filter_frame, deferred = build_filter_columns(con, args.block_id, underlying, groups, skipped)
+        filter_frame, deferred = build_filter_columns(con, args.block_id, underlying, groups, skipped, shared_dir)
 
     # Merge base + filters
     if filter_frame.empty:
@@ -1231,16 +1478,15 @@ def main() -> int:
     filter_order = [c for c in filter_order if not (c in seen or seen.add(c))]
     df = df[locked + filter_order]
 
-    # Holiday enrichment
+    # v2.0: Holiday enrichment is now handled as a regular CSV-source filter via
+    # entry_filter_dates_calendar.default.csv (see build_filter_columns CSV path).
+    # The legacy enrich_holidays() / resolve_holidays_csv() / Days_to_Holiday-style
+    # column-injection block has been retired — those 4 columns are now sourced
+    # from the calendar datelist as calendar_days_to_closure / etc., per the
+    # groups CSV's Location column.
     holidays_csv: Optional[pathlib.Path] = None
-    try:
-        holidays_csv = resolve_holidays_csv(shared_dir)
-        df = enrich_holidays(df, holidays_csv)
-        holiday_ok = True
-        holiday_note = f"enriched from {holidays_csv.name}"
-    except Exception as e:
-        holiday_ok = False
-        holiday_note = f"enrichment failed: {e}"
+    holiday_ok = True
+    holiday_note = "n/a (replaced by calendar datelist join in v2.0)"
 
     # Write
     out_csv = ref_folder / "entry_filter_data.csv"
@@ -1249,8 +1495,16 @@ def main() -> int:
     # ─── Post-action summary ───────────────────────────────────────────────
     n_base = len(locked)
     n_filter = len(filter_order)
-    n_holiday = 4 if holiday_ok else 0
     n_skipped = len(skipped)
+
+    # v2.0: Count datelist sources actually used (one entry per unique CSV file
+    # referenced via Location='*.csv' for an active filter). This replaces the
+    # legacy "n_holiday=4" hardcode.
+    datelist_files_used = sorted({
+        r["_loc_target"] for _, r in groups[groups["active"]].iterrows()
+        if r.get("_loc_kind") == "csv" and r.get("_loc_target")
+        and r["CSV Column"] in df.columns
+    })
 
     print()
     print("=" * 78)
@@ -1266,10 +1520,6 @@ def main() -> int:
         out_rel = out_csv.relative_to(tb_root)
     except ValueError:
         out_rel = out_csv
-    try:
-        holidays_rel = holidays_csv.relative_to(tb_root) if holiday_ok else None
-    except ValueError:
-        holidays_rel = holidays_csv if holiday_ok else None
 
     # Tag each path as [block-local] (lives in block's alex-tradeblocks-ref/) or
     # [shared] (lives in the plugin's _shared/ folder) or [explicit] (user-supplied).
@@ -1286,15 +1536,20 @@ def main() -> int:
 
     groups_tag = "explicit" if source == "explicit" else locality_tag(groups_path)
     out_tag = locality_tag(out_csv)
-    holidays_tag = locality_tag(holidays_csv) if holiday_ok else None
 
     print("\nSources (all used)")
     print(f"  Block:          {args.block_id}")
     print(f"  Groups CSV:     {groups_rel}  [{groups_tag}]")
-    if holiday_ok:
-        print(f"  Holidays CSV:   {holidays_rel}  [{holidays_tag}]")
+    if datelist_files_used:
+        for dl_filename in datelist_files_used:
+            dl_path = shared_dir / dl_filename
+            try:
+                dl_rel = dl_path.relative_to(tb_root)
+            except ValueError:
+                dl_rel = dl_path
+            print(f"  Datelist CSV:   {dl_rel}  [shared]")
     else:
-        print(f"  Holidays CSV:   (not loaded — {holiday_note})")
+        print(f"  Datelist CSVs:  (none — no Location='*.csv' filters were active)")
     if oo_meta.get("csv_path"):
         try:
             oo_rel = oo_meta["csv_path"].relative_to(tb_root)
@@ -1310,7 +1565,7 @@ def main() -> int:
     print(f"  Trades:           {len(df)}")
     print(f"  Base columns:     {n_base}")
     print(f"  Filter columns:   {n_filter} populated, {n_skipped} skipped")
-    print(f"  Holiday columns:  {n_holiday}")
+    print(f"  Datelist files:   {len(datelist_files_used)} ({', '.join(datelist_files_used) if datelist_files_used else 'none'})")
     print(f"  Total columns:    {len(df.columns)}")
 
     # Section 2b — TRADE-CONTEXT COVERAGE

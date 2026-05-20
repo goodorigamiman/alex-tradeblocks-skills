@@ -16,7 +16,7 @@ compatibility: Requires TradeBlocks 3.0 (Parquet market data under market/) plus
   market.duckdb is not used.
 metadata:
   author: alex-tradeblocks
-  version: "1.2.0"
+  version: "2.0.0"
 ---
 
 # Build Entry Filter Data CSV
@@ -33,15 +33,15 @@ Centralize the Phase 1 pipeline that every entry filter skill needs. Historicall
   2. `date_opened` (date)
   3. `time_opened` (time)
   4. `margin_per_contract` (float, 1-lot margin — i.e. per OO-contract, which equals 1 strategy lot; OO's "No. of Contracts" = number of lots)
-  5. `premium_per_contract` (float, per-lot net premium in price units. Notional/100. Signed: − debit paid, + credit received. Computed from legs as `sum(qty × signed_price) / num_contracts`; leg prices are summed with STO positive / BTO negative so the sign convention matches OO's `db`/`cr` labels)
+  5. `premium_per_contract` (float, per-lot net premium in price units. Notional/100. Signed: - debit paid, + credit received. Computed from legs as `sum(qty x signed_price) / num_contracts`; leg prices are summed with STO positive / BTO negative so the sign convention matches OO's `db`/`cr` labels)
   6. `pl_per_contract` (float, 1-lot P/L in $)
-  7. `rom_pct` (float, return on margin = pl / margin_req × 100)
-  8. `pcr_pct` (float, Premium Capture Rate = `pl / abs(sum(qty × signed_price) × 100) × 100`. Uses `abs()` on denominator so debit and credit entries both produce positive denominators — sign of PCR then tracks sign of P/L directly)
-  9. `VIX_at_Entry` (float, VIX level at the trade's entry timestamp. Primary: `market.intraday` VIX bar `open` at `(date_opened, time_opened)` — available for dates ≥ 2024-09-03 only. Fallback: OO trade-log CSV VIX column if present — OO's default export has no VIX column, so this is blank for older trades unless the user adds a custom OO column)
+  7. `rom_pct` (float, return on margin = pl / margin_req x 100)
+  8. `pcr_pct` (float, Premium Capture Rate = `pl / abs(sum(qty x signed_price) x 100) x 100`. Uses `abs()` on denominator so debit and credit entries both produce positive denominators — sign of PCR then tracks sign of P/L directly)
+  9. `VIX_at_Entry` (float, VIX level at the trade's entry timestamp. Primary: `market.intraday` VIX bar `open` at `(date_opened, time_opened)` — available for dates >= 2024-09-03 only. Fallback: OO trade-log CSV VIX column if present)
   10. `VIX_at_Close` (float, same logic as `VIX_at_Entry` but for `(date_closed, time_closed)`. For post-trade exit-attribution analysis, not an entry filter)
-  11. `Intra_Move_Pct` (float, same-day intraday price move from today's open to entry, as % of today's open. `(underlying_intraday_bar_open_at_entry − underlying_daily_open) / underlying_daily_open × 100`. Signed: + = underlying rallied from open, − = sold off. Primary: `market.intraday` bar of the block's underlying. Fallback: OO trade-log CSV `Movement` column (in points) divided by underlying daily open × 100 for scale consistency)
+  11. `Intra_Move_Pct` (float, same-day intraday price move from today's open to entry, as % of today's open. Signed: + = underlying rallied from open, - = sold off. Primary: `market.intraday` bar of the block's underlying. Fallback: OO trade-log CSV `Movement` column)
 - Filter columns: **names and inclusion come from the groups CSV**, not from this skill. Every row where `TB Filter = TRUE` and `CSV Column` is non-blank becomes a column.
-- Holiday columns (appended by this skill): `Days_to_Holiday`, `Weeks_to_Holiday`, `Days_from_Holiday`, `Weeks_from_Holiday`.
+- Datelist-sourced columns (CSV-source filters): joined from the relevant `entry_filter_dates_*.default.csv` file based on the `Location` column in the groups CSV. Replaces the legacy inline holiday-enrichment step.
 
 **Note on the `Entry Filter` column (groups CSV):** this skill writes every TB-Filter=TRUE column to `entry_filter_data.csv` regardless of the `Entry Filter` flag — the data file is a complete per-trade record of what the pipeline observed. The `Entry Filter` flag only affects downstream analysis scope: the threshold-sweep excludes `Entry Filter = FALSE` columns from the result CSVs so they don't pollute the heatmap / threshold-analysis / filter recommendations. Use `Entry Filter = FALSE` for columns you want to collect for correlation / audit purposes but never want surfaced as a candidate entry filter (e.g. `VIX_at_Close` is exit-time data and would be lookahead if treated as an entry signal).
 

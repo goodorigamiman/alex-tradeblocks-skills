@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-alex-entry-filter-threshold-sweep — CLI driver.
+dev-entry-filter-threshold-sweep — CLI driver.
 
 Pre-computes sweep results for every continuous AND categorical entry filter
 on a block, producing two sibling CSVs that downstream skills (heatmap, pareto,

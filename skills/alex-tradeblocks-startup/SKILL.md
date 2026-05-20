@@ -4,7 +4,7 @@ description: TradeBlocks startup check (3.0 Parquet-mode aware). Verifies the MC
 compatibility: Requires TradeBlocks MCP 3.0+ in Parquet mode. Docker is optional (only required when the user's `.mcp.json` primary points at a Docker container, OR when the user wants to test the published version). Market data probes route through the MCP (`run_sql` over registered views that read Parquet). Market data provider (ThetaData, Massive, or other), host MCP start command + source dir, and dev workspace layout are all discovered from the local config — no assumptions baked in.
 metadata:
   author: alex-tradeblocks
-  version: "5.5.0"
+  version: "5.5.1"
 ---
 
 # Dev TradeBlocks Startup
@@ -153,7 +153,7 @@ The probe is the same regardless of whether the backend is a host process or a D
 
    **Case C — primary is `container` (Docker is the primary by `.mcp.json` configuration):** standard pulled-only setup. Surface: *"Primary Docker MCP at port {primary_port} is not running. Start with `cd $TB_ROOT/{mcp_compose_dir} && docker compose up -d` and quit + relaunch Claude Code."* If Docker daemon is also down, mention that fact (separate `docker info` probe). **Do NOT auto-start Docker** even when it IS the primary — auto-start has subtle race conditions with Layer B (Claude Code's MCP client only re-attempts at session start), so a clear instruction + Claude Code restart is better than silent recovery.
 
-5. **Compose file existence check** (only relevant when backend kind is `container`): if `$TB_ROOT/{mcp_compose_dir}/docker-compose.yml` is missing, this is a fresh install — tell the user: *"No MCP compose file found at `{path}`. See TradeBlocks MCP install docs: https://github.com/davidromeo/tradeblocks"*.
+5. **Compose file existence check** (only relevant when backend kind is `container`): if `$TB_ROOT/{mcp_compose_dir}/docker-compose.yml` is missing, this is a fresh install — tell the user: *"No MCP compose file found at `{path}`. See TradeBlocks MCP install docs: https://github.com/tradeblocks-org/tradeblocks"*.
 
 6. **Container-specific tail** (when primary is a container that's running but unhealthy): `docker compose logs --tail=40` to surface error context.
 

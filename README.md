@@ -1,6 +1,6 @@
 # alex-tradeblocks-skills
 
-Personal skill pack extending the [TradeBlocks MCP server](https://github.com/davidromeo/tradeblocks) with an end-to-end entry-filter analysis pipeline for Option Omega backtests. Built for Claude Code (or any compatible MCP-skill harness).
+Personal skill pack extending the [TradeBlocks MCP server](https://github.com/tradeblocks-org/tradeblocks) with an end-to-end entry-filter analysis pipeline for Option Omega backtests. Built for Claude Code (or any compatible MCP-skill harness).
 
 ---
 
@@ -27,7 +27,7 @@ Then quit and relaunch Claude Code to activate.
 
 ## Requirements
 
-- **[TradeBlocks MCP server](https://github.com/davidromeo/tradeblocks) 3.x.x** running with `TRADEBLOCKS_PARQUET=true` (Docker, Node, or any supported run method — see TB docs). For 2.x / DuckDB-only setups, see the prerequisite callout above and install [`v2.6.2`](https://github.com/goodorigamiman/alex-tradeblocks-skills/releases/tag/v2.6.2) instead.
+- **[TradeBlocks MCP server](https://github.com/tradeblocks-org/tradeblocks) 3.x.x** running with `TRADEBLOCKS_PARQUET=true` (Docker, Node, or any supported run method — see TB docs). For 2.x / DuckDB-only setups, see the prerequisite callout above and install [`v2.6.2`](https://github.com/goodorigamiman/alex-tradeblocks-skills/releases/tag/v2.6.2) instead.
 - **Market data provider** — ThetaData (local daemon), Massive.com, TradingView (CSV import), or equivalent
 - **Python 3** with `duckdb`, `pandas`, `numpy`, `pyyaml`
 - **Option Omega CSV exports** imported into block folders
@@ -40,7 +40,7 @@ No cross-plugin dependencies — every skill is self-contained.
 
 <!-- SKILLS-TABLE:BEGIN (auto-managed by the github publish workflow — do not edit between markers; edit dev SKILL.md descriptions instead) -->
 
-11 skills organized into three groups.
+12 skills organized into three groups.
 
 ### Startup & tooling
 
@@ -67,6 +67,7 @@ No cross-plugin dependencies — every skill is self-contained.
 |---|---|
 | `alex-entry-filter-threshold-analysis` | Per-filter deep dive — interactive Chart.js HTML with scatter, threshold sweep, efficiency frontier, and OO-formatted filter translations. One filter per run. |
 | `alex-create-datelist` | Generates Option Omega-compatible ISO datelists from filter expressions. Emits two code blocks: AND-intersection whitelist + per-filter blackout block, both copy-paste ready. |
+| `alex-oo-signal-csv` | Generates Option Omega Custom Signals Tester CSV files from any signal source — chat-described trades, paired entries/exits, TradeBlocks block trade data, datelist outputs, or filtered backtest results. Auto-selects the right OO format option (1–4) based on the data provided. |
 
 <!-- SKILLS-TABLE:END -->
 
